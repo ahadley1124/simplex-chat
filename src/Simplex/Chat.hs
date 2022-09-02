@@ -215,10 +215,10 @@ createAgentCommand connId_ command continuation = do
   pure ()
 
 data AgentCommandContinuation
-  = ACCXGrpMemIntroGroup
-  | ACCXGrpMemIntroDirect
-  | ACCXGrpMemFwdGroup
-  | ACCXGrpMemFwdDirect
+  = ACCXGrpMemIntroGroup {groupId :: GroupId, hostMemberId :: GroupMemberId, memInfo :: MemberInfo, hostConnId :: Int64} -- last parameter is to send back XGrpMemInv
+  | ACCXGrpMemIntroDirect {groupId :: GroupId, hostMemberId :: GroupMemberId, memInfo :: MemberInfo, hostConnId :: Int64}
+  | ACCXGrpMemFwdGroup {groupId :: GroupId, viaMemberId :: GroupMemberId, toMemberId :: GroupMemberId}
+  | ACCXGrpMemFwdDirect {groupId :: GroupId, viaMemberId :: GroupMemberId, toMemberId :: GroupMemberId}
 
 processChatCommand :: forall m. ChatMonad m => ChatCommand -> m ChatResponse
 processChatCommand = \case
@@ -277,6 +277,7 @@ processChatCommand = \case
         setupSndFileTransfer :: Contact -> m (Maybe (FileInvitation, CIFile 'MDSnd))
         setupSndFileTransfer ct = forM file_ $ \file -> do
           (fileSize, chSize) <- checkSndFile file
+          -- [continuation] ACCSendFileDirect or show error?
           (agentConnId, fileConnReq) <- withAgent $ \a -> createConnection a True SCMInvitation
           let fileName = takeFileName file
               fileInvitation = FileInvitation {fileName, fileSize, fileConnReq = Just fileConnReq}
@@ -1126,6 +1127,7 @@ acceptFileReceive user@User {userId} RcvFileTransfer {fileId, fileInvitation = F
   case fileConnReq of
     -- direct file protocol
     Just connReq ->
+      -- [continuation] ACCReceiveFileDirect or show error? there's already processError in ReceiveFile
       tryError (withAgent $ \a -> joinConnection a True connReq . directMessage $ XFileAcpt fName) >>= \case
         Right agentConnId -> do
           filePath <- getRcvFilePath filePath_ fName
@@ -1140,6 +1142,7 @@ acceptFileReceive user@User {userId} RcvFileTransfer {fileId, fileInvitation = F
           case activeConn of
             Just conn -> do
               sharedMsgId <- withStore $ \db -> getSharedMsgIdByFileId db userId fileId
+              -- [continuation] ACCReceiveFileGroup or show error? there's already processError in ReceiveFile
               (agentConnId, fileInvConnReq) <- withAgent $ \a -> createConnection a True SCMInvitation
               filePath <- getRcvFilePath filePath_ fName
               ci <- withStore $ \db -> acceptRcvFileTransfer db user fileId agentConnId ConnNew filePath
@@ -1375,6 +1378,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
           incognitoProfile <- forM customUserProfileId $ \profileId -> withStore (\db -> getProfileById db userId profileId)
           let profileToSend = fromLocalProfile $ fromMaybe profile incognitoProfile
           saveConnInfo conn connInfo
+          -- [continuation] no continuation needed, but command should be made asynchronous for persistence?
           allowAgentConnection conn confId $ XInfo profileToSend
         INFO connInfo ->
           saveConnInfo conn connInfo
@@ -1585,6 +1589,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
             XFileAcpt name
               | name == fileName -> do
                 withStore' $ \db -> updateSndFileStatus db ft FSAccepted
+                -- [continuation] no continuation needed, but command should be made asynchronous for persistence?
                 allowAgentConnection conn confId XOk
               | otherwise -> messageError "x.file.acpt: fileName is different from expected"
             _ -> messageError "CONF from file connection must have x.file.acpt"
@@ -1619,7 +1624,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
         CONF confId _ connInfo -> do
           ChatMessage {chatMsgEvent} <- liftEither $ parseChatMessage connInfo
           case chatMsgEvent of
-            XOk -> allowAgentConnection conn confId XOk
+            XOk -> allowAgentConnection conn confId XOk -- [continuation] no continuation needed, but command should be made asynchronous for persistence?
             _ -> pure ()
         CON -> do
           ci <- withStore $ \db -> do
@@ -1693,6 +1698,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
 
     withAckMessage :: ConnId -> MsgMeta -> m () -> m ()
     withAckMessage cId MsgMeta {recipient = (msgId, _)} action =
+      -- [continuation] no continuation needed, but command should be made asynchronous for persistence?
       action `E.finally` withAgent (\a -> ackMessage a cId msgId `catchError` \_ -> pure ())
 
     ackMsgDeliveryEvent :: Connection -> MsgMeta -> m ()
@@ -1737,8 +1743,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
       (probe, probeId) <- withStore $ \db -> createSentProbe db gVar userId ct
       void . sendDirectContactMessage ct $ XInfoProbe probe
       if connectedIncognito
-        then
-          withStore' $ \db -> deleteSentProbe db userId probeId
+        then withStore' $ \db -> deleteSentProbe db userId probeId
         else do
           cs <- withStore' $ \db -> getMatchingContacts db userId ct
           let probeHash = ProbeHash $ C.sha256Hash (unProbe probe)
@@ -1905,6 +1910,7 @@ processAgentMessage (Just user@User {userId, profile}) agentConnId agentMessage 
       unless cancelled $
         if fName == fileName
           then
+            -- [continuation] no continuation needed, but command should be made asynchronous for persistence?
             tryError (withAgent $ \a -> joinConnection a True fileConnReq . directMessage $ XOk) >>= \case
               Right acId ->
                 withStore' $ \db -> createSndGroupFileTransferConnection db userId fileId acId m
