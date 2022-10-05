@@ -17,9 +17,13 @@ import Control.Monad.Reader
 import Crypto.Random (ChaChaDRG)
 import Data.Aeson (FromJSON, ToJSON)
 import qualified Data.Aeson as J
+import qualified Data.Attoparsec.ByteString.Char8 as A
 import Data.ByteString.Char8 (ByteString)
+import qualified Data.ByteString.Char8 as B
+import Data.Char (ord)
 import Data.Int (Int64)
 import Data.Map.Strict (Map)
+import Data.String
 import Data.Text (Text)
 import Data.Time (ZonedTime)
 import Data.Time.Clock (UTCTime)
@@ -38,8 +42,9 @@ import Simplex.Messaging.Agent.Env.SQLite (AgentConfig, InitialAgentServers, Net
 import Simplex.Messaging.Agent.Protocol
 import Simplex.Messaging.Agent.Store.SQLite (SQLiteStore)
 import qualified Simplex.Messaging.Crypto as C
+import Simplex.Messaging.Encoding.String
 import Simplex.Messaging.Notifications.Protocol (DeviceToken (..), NtfTknStatus)
-import Simplex.Messaging.Parsers (dropPrefix, enumJSON, sumTypeJSON)
+import Simplex.Messaging.Parsers (dropPrefix, enumJSON, parseAll, parseString, sumTypeJSON)
 import Simplex.Messaging.Protocol (AProtocolType, CorrId, MsgFlags)
 import Simplex.Messaging.TMap (TMap)
 import Simplex.Messaging.Transport.Client (TransportHost)
@@ -69,6 +74,8 @@ data ChatConfig = ChatConfig
 
 data ActiveTo = ActiveNone | ActiveC ContactName | ActiveG GroupName
   deriving (Eq)
+
+data ChatDatabase = ChatDatabase {chatStore :: SQLiteStore, agentStore :: SQLiteStore}
 
 data ChatController = ChatController
   { currentUser :: TVar (Maybe User),
@@ -112,6 +119,9 @@ data ChatCommand
   | APIExportArchive ArchiveConfig
   | APIImportArchive ArchiveConfig
   | APIDeleteStorage
+  | APIStorageEncryption DBEncryptionConfig
+  | ExecChatStoreSQL Text
+  | ExecAgentStoreSQL Text
   | APIGetChats {pendingConnections :: Bool}
   | APIGetChat ChatRef ChatPagination (Maybe String)
   | APIGetChatItems Int
@@ -134,6 +144,7 @@ data ChatCommand
   | APICallStatus ContactId WebRTCCallStatus
   | APIUpdateProfile Profile
   | APISetContactAlias ContactId LocalAlias
+  | APISetConnectionAlias Int64 LocalAlias
   | APIParseMarkdown Text
   | APIGetNtfToken
   | APIRegisterToken DeviceToken NotificationsMode
@@ -154,6 +165,7 @@ data ChatCommand
   | APISetChatSettings ChatRef ChatSettings
   | APIContactInfo ContactId
   | APIGroupMemberInfo GroupId GroupMemberId
+  | ShowMessages ChatName Bool
   | ContactInfo ContactName
   | GroupMemberInfo GroupName ContactName
   | ChatHelp HelpSection
@@ -269,6 +281,7 @@ data ChatResponse
   | CRSndGroupFileCancelled {chatItem :: AChatItem, fileTransferMeta :: FileTransferMeta, sndFileTransfers :: [SndFileTransfer]}
   | CRUserProfileUpdated {fromProfile :: Profile, toProfile :: Profile}
   | CRContactAliasUpdated {toContact :: Contact}
+  | CRConnectionAliasUpdated {toConnection :: PendingContactConnection}
   | CRContactConnecting {contact :: Contact}
   | CRContactConnected {contact :: Contact, userCustomProfile :: Maybe Profile}
   | CRContactAnotherClient {contact :: Contact}
@@ -310,6 +323,7 @@ data ChatResponse
   | CRNtfMessages {connEntity :: Maybe ConnectionEntity, msgTs :: Maybe UTCTime, ntfMessages :: [NtfMsgInfo]}
   | CRNewContactConnection {connection :: PendingContactConnection}
   | CRContactConnectionDeleted {connection :: PendingContactConnection}
+  | CRSQLResult {rows :: [Text]}
   | CRMessageError {severity :: Text, errorMessage :: Text}
   | CRChatCmdError {chatError :: ChatError}
   | CRChatError {chatError :: ChatError}
@@ -321,6 +335,21 @@ instance ToJSON ChatResponse where
 
 data ArchiveConfig = ArchiveConfig {archivePath :: FilePath, disableCompression :: Maybe Bool, parentTempDirectory :: Maybe FilePath}
   deriving (Show, Generic, FromJSON)
+
+data DBEncryptionConfig = DBEncryptionConfig {currentKey :: DBEncryptionKey, newKey :: DBEncryptionKey}
+  deriving (Show, Generic, FromJSON)
+
+newtype DBEncryptionKey = DBEncryptionKey String
+  deriving (Show)
+
+instance IsString DBEncryptionKey where fromString = parseString $ parseAll strP
+
+instance StrEncoding DBEncryptionKey where
+  strEncode (DBEncryptionKey s) = B.pack s
+  strP = DBEncryptionKey . B.unpack <$> A.takeWhile (\c -> c /= ' ' && ord c >= 0x21 && ord c <= 0x7E)
+
+instance FromJSON DBEncryptionKey where
+  parseJSON = strParseJSON "DBEncryptionKey"
 
 data ContactSubStatus = ContactSubStatus
   { contact :: Contact,
@@ -371,6 +400,7 @@ data ChatError
   = ChatError {errorType :: ChatErrorType}
   | ChatErrorAgent {agentError :: AgentErrorType}
   | ChatErrorStore {storeError :: StoreError}
+  | ChatErrorDatabase {databaseError :: DatabaseError}
   deriving (Show, Exception, Generic)
 
 instance ToJSON ChatError where
@@ -422,11 +452,34 @@ data ChatErrorType
   | CEAgentVersion
   | CEAgentNoSubResult {agentConnId :: AgentConnId}
   | CECommandError {message :: String}
+  | CEAgentCommandError {message :: String}
   deriving (Show, Exception, Generic)
 
 instance ToJSON ChatErrorType where
   toJSON = J.genericToJSON . sumTypeJSON $ dropPrefix "CE"
   toEncoding = J.genericToEncoding . sumTypeJSON $ dropPrefix "CE"
+
+data DatabaseError
+  = DBErrorEncrypted
+  | DBErrorPlaintext
+  | DBErrorNoFile {dbFile :: String}
+  | DBErrorExport {sqliteError :: SQLiteError}
+  | DBErrorOpen {sqliteError :: SQLiteError}
+  deriving (Show, Exception, Generic)
+
+instance ToJSON DatabaseError where
+  toJSON = J.genericToJSON . sumTypeJSON $ dropPrefix "DB"
+  toEncoding = J.genericToEncoding . sumTypeJSON $ dropPrefix "DB"
+
+data SQLiteError = SQLiteErrorNotADatabase | SQLiteError String
+  deriving (Show, Exception, Generic)
+
+instance ToJSON SQLiteError where
+  toJSON = J.genericToJSON . sumTypeJSON $ dropPrefix "SQLite"
+  toEncoding = J.genericToEncoding . sumTypeJSON $ dropPrefix "SQLite"
+
+throwDBError :: ChatMonad m => DatabaseError -> m ()
+throwDBError = throwError . ChatErrorDatabase
 
 type ChatMonad m = (MonadUnliftIO m, MonadReader ChatController m, MonadError ChatError m)
 

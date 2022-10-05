@@ -20,8 +20,9 @@
 module Simplex.Chat.Store
   ( SQLiteStore,
     StoreError (..),
-    createStore,
+    createChatStore,
     chatStoreFile,
+    agentStoreFile,
     createUser,
     getUsers,
     setActiveUser,
@@ -39,6 +40,7 @@ module Simplex.Chat.Store
     updateUserProfile,
     updateContactProfile,
     updateContactAlias,
+    updateContactConnectionAlias,
     getUserContacts,
     createUserContactLink,
     getUserContactLinkConnections,
@@ -58,6 +60,7 @@ module Simplex.Chat.Store
     getPendingContactConnections,
     getContactConnections,
     getConnectionEntity,
+    getConnectionById,
     getConnectionsContacts,
     getGroupAndMember,
     updateConnectionStatus,
@@ -82,6 +85,7 @@ module Simplex.Chat.Store
     getMemberInvitation,
     createMemberConnection,
     updateGroupMemberStatus,
+    updateGroupMemberStatusById,
     createNewGroupMember,
     deleteGroupMember,
     deleteGroupMemberConnection,
@@ -103,6 +107,8 @@ module Simplex.Chat.Store
     matchSentProbe,
     mergeContactRecords,
     createSndFileTransfer,
+    createSndDirectFileTransfer,
+    createSndDirectFTConnection,
     createSndGroupFileTransfer,
     createSndGroupFileTransferConnection,
     updateFileCancelled,
@@ -110,6 +116,7 @@ module Simplex.Chat.Store
     getSharedMsgIdByFileId,
     getFileIdBySharedMsgId,
     getGroupFileIdBySharedMsgId,
+    getDirectFileIdBySharedMsgId,
     getChatRefByFileId,
     updateSndFileStatus,
     createSndFileChunk,
@@ -174,6 +181,14 @@ module Simplex.Chat.Store
     createCall,
     deleteCalls,
     getCalls,
+    createCommand,
+    setCommandConnId,
+    deleteCommand,
+    updateCommandStatus,
+    getCommandDataByCorrId,
+    setConnConnReqInv,
+    getXGrpMemIntroContDirect,
+    getXGrpMemIntroContGroup,
     getPendingContactConnection,
     deletePendingContactConnection,
     updateContactSettings,
@@ -233,9 +248,11 @@ import Simplex.Chat.Migrations.M20220818_chat_notifications
 import Simplex.Chat.Migrations.M20220822_groups_host_conn_custom_user_profile_id
 import Simplex.Chat.Migrations.M20220823_delete_broken_group_event_chat_items
 import Simplex.Chat.Migrations.M20220824_profiles_local_alias
+import Simplex.Chat.Migrations.M20220909_commands
+import Simplex.Chat.Migrations.M20220926_connection_alias
 import Simplex.Chat.Protocol
 import Simplex.Chat.Types
-import Simplex.Messaging.Agent.Protocol (AgentMsgId, ConnId, InvitationId, MsgMeta (..))
+import Simplex.Messaging.Agent.Protocol (ACorrId, AgentMsgId, ConnId, InvitationId, MsgMeta (..))
 import Simplex.Messaging.Agent.Store.SQLite (SQLiteStore (..), createSQLiteStore, firstRow, firstRow', maybeFirstRow, withTransaction)
 import Simplex.Messaging.Agent.Store.SQLite.Migrations (Migration (..))
 import qualified Simplex.Messaging.Crypto as C
@@ -267,7 +284,9 @@ schemaMigrations =
     ("20220818_chat_notifications", m20220818_chat_notifications),
     ("20220822_groups_host_conn_custom_user_profile_id", m20220822_groups_host_conn_custom_user_profile_id),
     ("20220823_delete_broken_group_event_chat_items", m20220823_delete_broken_group_event_chat_items),
-    ("20220824_profiles_local_alias", m20220824_profiles_local_alias)
+    ("20220824_profiles_local_alias", m20220824_profiles_local_alias),
+    ("20220909_commands", m20220909_commands),
+    ("20220926_connection_alias", m20220926_connection_alias)
   ]
 
 -- | The list of migrations in ascending order by date
@@ -276,11 +295,14 @@ migrations = sortBy (compare `on` name) $ map migration schemaMigrations
   where
     migration (name, query) = Migration {name = name, up = fromQuery query}
 
-createStore :: FilePath -> Bool -> IO SQLiteStore
-createStore dbFilePath = createSQLiteStore dbFilePath migrations
+createChatStore :: FilePath -> String -> Bool -> IO SQLiteStore
+createChatStore dbFilePath dbKey = createSQLiteStore dbFilePath dbKey migrations
 
 chatStoreFile :: FilePath -> FilePath
 chatStoreFile = (<> "_chat.db")
+
+agentStoreFile :: FilePath -> FilePath
+agentStoreFile = (<> "_agent.db")
 
 checkConstraint :: StoreError -> ExceptT StoreError IO a -> ExceptT StoreError IO a
 checkConstraint err action = ExceptT $ runExceptT action `E.catch` (pure . Left . handleSQLError err)
@@ -356,7 +378,7 @@ createConnReqConnection db userId acId cReqHash xContactId incognitoProfile = do
     |]
     (userId, acId, pccConnStatus, ConnContact, cReqHash, xContactId, customUserProfileId, createdAt, createdAt)
   pccConnId <- insertedRowId db
-  pure PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = True, viaUserContactLink = Nothing, customUserProfileId, createdAt, updatedAt = createdAt}
+  pure PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = True, viaUserContactLink = Nothing, customUserProfileId, connReqInv = Nothing, localAlias = "", createdAt, updatedAt = createdAt}
 
 getConnReqContactXContactId :: DB.Connection -> UserId -> ConnReqUriHash -> IO (Maybe Contact, Maybe XContactId)
 getConnReqContactXContactId db userId cReqHash = do
@@ -374,7 +396,7 @@ getConnReqContactXContactId db userId cReqHash = do
               -- Contact
               ct.contact_id, ct.contact_profile_id, ct.local_display_name, ct.via_group, cp.display_name, cp.full_name, cp.image, cp.local_alias, ct.enable_ntfs, ct.created_at, ct.updated_at,
               -- Connection
-              c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type,
+              c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type, c.local_alias,
               c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
             FROM contacts ct
             JOIN contact_profiles cp ON ct.contact_profile_id = cp.contact_profile_id
@@ -392,19 +414,19 @@ getConnReqContactXContactId db userId cReqHash = do
           "SELECT xcontact_id FROM connections WHERE user_id = ? AND via_contact_uri_hash = ? LIMIT 1"
           (userId, cReqHash)
 
-createDirectConnection :: DB.Connection -> UserId -> ConnId -> ConnStatus -> Maybe Profile -> IO PendingContactConnection
-createDirectConnection db userId acId pccConnStatus incognitoProfile = do
+createDirectConnection :: DB.Connection -> UserId -> ConnId -> ConnReqInvitation -> ConnStatus -> Maybe Profile -> IO PendingContactConnection
+createDirectConnection db userId acId cReq pccConnStatus incognitoProfile = do
   createdAt <- getCurrentTime
   customUserProfileId <- createIncognitoProfile_ db userId createdAt incognitoProfile
   DB.execute
     db
     [sql|
       INSERT INTO connections
-        (user_id, agent_conn_id, conn_status, conn_type, custom_user_profile_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?)
+        (user_id, agent_conn_id, conn_req_inv, conn_status, conn_type, custom_user_profile_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)
     |]
-    (userId, acId, pccConnStatus, ConnContact, customUserProfileId, createdAt, createdAt)
+    (userId, acId, cReq, pccConnStatus, ConnContact, customUserProfileId, createdAt, createdAt)
   pccConnId <- insertedRowId db
-  pure PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = False, viaUserContactLink = Nothing, customUserProfileId, createdAt, updatedAt = createdAt}
+  pure PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = False, viaUserContactLink = Nothing, customUserProfileId, connReqInv = Just cReq, localAlias = "", createdAt, updatedAt = createdAt}
 
 createIncognitoProfile_ :: DB.Connection -> UserId -> UTCTime -> Maybe Profile -> IO (Maybe Int64)
 createIncognitoProfile_ db userId createdAt incognitoProfile =
@@ -447,23 +469,23 @@ createConnection_ db userId connType entityId acId viaContact viaUserContactLink
         :. (ent ConnContact, ent ConnMember, ent ConnSndFile, ent ConnRcvFile, ent ConnUserContact, currentTs, currentTs)
     )
   connId <- insertedRowId db
-  pure Connection {connId, agentConnId = AgentConnId acId, connType, entityId, viaContact, viaUserContactLink, customUserProfileId, connLevel, connStatus = ConnNew, createdAt = currentTs}
+  pure Connection {connId, agentConnId = AgentConnId acId, connType, entityId, viaContact, viaUserContactLink, customUserProfileId, connLevel, connStatus = ConnNew, localAlias = "", createdAt = currentTs}
   where
     ent ct = if connType == ct then entityId else Nothing
 
 createDirectContact :: DB.Connection -> UserId -> Connection -> Profile -> ExceptT StoreError IO Contact
-createDirectContact db userId activeConn@Connection {connId} profile = do
+createDirectContact db userId activeConn@Connection {connId, localAlias} profile = do
   createdAt <- liftIO getCurrentTime
-  (localDisplayName, contactId, profileId) <- createContact_ db userId connId profile Nothing createdAt
+  (localDisplayName, contactId, profileId) <- createContact_ db userId connId profile localAlias Nothing createdAt
   pure $ Contact {contactId, localDisplayName, profile = toLocalProfile profileId profile "", activeConn, viaGroup = Nothing, chatSettings = defaultChatSettings, createdAt, updatedAt = createdAt}
 
-createContact_ :: DB.Connection -> UserId -> Int64 -> Profile -> Maybe Int64 -> UTCTime -> ExceptT StoreError IO (Text, ContactId, ProfileId)
-createContact_ db userId connId Profile {displayName, fullName, image} viaGroup currentTs =
+createContact_ :: DB.Connection -> UserId -> Int64 -> Profile -> LocalAlias -> Maybe Int64 -> UTCTime -> ExceptT StoreError IO (Text, ContactId, ProfileId)
+createContact_ db userId connId Profile {displayName, fullName, image} localAlias viaGroup currentTs =
   ExceptT . withLocalDisplayName db userId displayName $ \ldn -> do
     DB.execute
       db
-      "INSERT INTO contact_profiles (display_name, full_name, image, user_id, created_at, updated_at) VALUES (?,?,?,?,?,?)"
-      (displayName, fullName, image, userId, currentTs, currentTs)
+      "INSERT INTO contact_profiles (display_name, full_name, image, user_id, local_alias, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
+      (displayName, fullName, image, userId, localAlias, currentTs, currentTs)
     profileId <- insertedRowId db
     DB.execute
       db
@@ -559,7 +581,20 @@ updateContactAlias db userId c@Contact {profile = lp@LocalProfile {profileId}} l
       WHERE user_id = ? AND contact_profile_id = ?
     |]
     (localAlias, updatedAt, userId, profileId)
-  pure $ (c :: Contact) {profile = lp {localAlias = localAlias}}
+  pure $ (c :: Contact) {profile = lp {localAlias}}
+
+updateContactConnectionAlias :: DB.Connection -> UserId -> PendingContactConnection -> LocalAlias -> IO PendingContactConnection
+updateContactConnectionAlias db userId conn localAlias = do
+  updatedAt <- getCurrentTime
+  DB.execute
+    db
+    [sql|
+      UPDATE connections
+      SET local_alias = ?, updated_at = ?
+      WHERE user_id = ? AND connection_id = ?
+    |]
+    (localAlias, updatedAt, userId, pccConnId conn)
+  pure (conn :: PendingContactConnection) {localAlias}
 
 updateContactProfile_ :: DB.Connection -> UserId -> ProfileId -> Profile -> IO ()
 updateContactProfile_ db userId profileId profile = do
@@ -609,9 +644,9 @@ toContactOrError ((contactId, profileId, localDisplayName, viaGroup, displayName
 
 -- TODO return the last connection that is ready, not any last connection
 -- requires updating connection status
-getContactByName :: DB.Connection -> UserId -> ContactName -> ExceptT StoreError IO Contact
-getContactByName db userId localDisplayName = do
-  cId <- getContactIdByName db userId localDisplayName
+getContactByName :: DB.Connection -> User -> ContactName -> ExceptT StoreError IO Contact
+getContactByName db user@User {userId} localDisplayName = do
+  cId <- getContactIdByName db user localDisplayName
   getContact db userId cId
 
 getUserContacts :: DB.Connection -> User -> IO [Contact]
@@ -642,7 +677,7 @@ getUserContactLinks db User {userId} =
       db
       [sql|
         SELECT c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at,
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at,
           uc.user_contact_link_id, uc.conn_req_contact
         FROM connections c
         JOIN user_contact_links uc ON c.user_contact_link_id = uc.user_contact_link_id
@@ -786,7 +821,7 @@ createOrUpdateContactRequest db userId userContactLinkId invId Profile {displayN
               -- Contact
               ct.contact_id, ct.contact_profile_id, ct.local_display_name, ct.via_group, cp.display_name, cp.full_name, cp.image, cp.local_alias, ct.enable_ntfs, ct.created_at, ct.updated_at,
               -- Connection
-              c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type,
+              c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type, c.local_alias,
               c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
             FROM contacts ct
             JOIN contact_profiles cp ON ct.contact_profile_id = cp.contact_profile_id
@@ -961,7 +996,7 @@ getPendingContactConnections db User {userId} = do
     <$> DB.queryNamed
       db
       [sql|
-        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, created_at, updated_at
+        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, conn_req_inv, local_alias, created_at, updated_at
         FROM connections
         WHERE user_id = :user_id
           AND conn_type = :conn_type
@@ -978,7 +1013,7 @@ getContactConnections db userId Contact {contactId} =
         db
         [sql|
           SELECT c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-            c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+            c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
           FROM connections c
           JOIN contacts ct ON ct.contact_id = c.contact_id
           WHERE c.user_id = ? AND ct.user_id = ? AND ct.contact_id = ?
@@ -989,14 +1024,14 @@ getContactConnections db userId Contact {contactId} =
 
 type EntityIdsRow = (Maybe Int64, Maybe Int64, Maybe Int64, Maybe Int64, Maybe Int64)
 
-type ConnectionRow = (Int64, ConnId, Int, Maybe Int64, Maybe Int64, Maybe Int64, ConnStatus, ConnType) :. EntityIdsRow :. Only UTCTime
+type ConnectionRow = (Int64, ConnId, Int, Maybe Int64, Maybe Int64, Maybe Int64, ConnStatus, ConnType, LocalAlias) :. EntityIdsRow :. Only UTCTime
 
-type MaybeConnectionRow = (Maybe Int64, Maybe ConnId, Maybe Int, Maybe Int64, Maybe Int64, Maybe Int64, Maybe ConnStatus, Maybe ConnType) :. EntityIdsRow :. Only (Maybe UTCTime)
+type MaybeConnectionRow = (Maybe Int64, Maybe ConnId, Maybe Int, Maybe Int64, Maybe Int64, Maybe Int64, Maybe ConnStatus, Maybe ConnType, Maybe LocalAlias) :. EntityIdsRow :. Only (Maybe UTCTime)
 
 toConnection :: ConnectionRow -> Connection
-toConnection ((connId, acId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only createdAt) =
+toConnection ((connId, acId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType, localAlias) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only createdAt) =
   let entityId = entityId_ connType
-   in Connection {connId, agentConnId = AgentConnId acId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType, entityId, createdAt}
+   in Connection {connId, agentConnId = AgentConnId acId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType, localAlias, entityId, createdAt}
   where
     entityId_ :: ConnType -> Maybe Int64
     entityId_ ConnContact = contactId
@@ -1006,8 +1041,8 @@ toConnection ((connId, acId, connLevel, viaContact, viaUserContactLink, customUs
     entityId_ ConnUserContact = userContactLinkId
 
 toMaybeConnection :: MaybeConnectionRow -> Maybe Connection
-toMaybeConnection ((Just connId, Just agentConnId, Just connLevel, viaContact, viaUserContactLink, customUserProfileId, Just connStatus, Just connType) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only (Just createdAt)) =
-  Just $ toConnection ((connId, agentConnId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only createdAt)
+toMaybeConnection ((Just connId, Just agentConnId, Just connLevel, viaContact, viaUserContactLink, customUserProfileId, Just connStatus, Just connType, Just localAlias) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only (Just createdAt)) =
+  Just $ toConnection ((connId, agentConnId, connLevel, viaContact, viaUserContactLink, customUserProfileId, connStatus, connType, localAlias) :. (contactId, groupMemberId, sndFileId, rcvFileId, userContactLinkId) :. Only createdAt)
 toMaybeConnection _ = Nothing
 
 getMatchingContacts :: DB.Connection -> UserId -> Contact -> IO [Contact]
@@ -1174,7 +1209,7 @@ getConnectionEntity db user@User {userId, userContactId} agentConnId = do
           db
           [sql|
             SELECT connection_id, agent_conn_id, conn_level, via_contact, via_user_contact_link, custom_user_profile_id,
-              conn_status, conn_type, contact_id, group_member_id, snd_file_id, rcv_file_id, user_contact_link_id, created_at
+              conn_status, conn_type, local_alias, contact_id, group_member_id, snd_file_id, rcv_file_id, user_contact_link_id, created_at
             FROM connections
             WHERE user_id = ? AND agent_conn_id = ?
           |]
@@ -1264,6 +1299,19 @@ getConnectionEntity db user@User {userId, userContactId} agentConnId = do
         userContact_ [Only cReq] = Right UserContact {userContactLinkId, connReqContact = cReq}
         userContact_ _ = Left SEUserContactLinkNotFound
 
+getConnectionById :: DB.Connection -> User -> Int64 -> ExceptT StoreError IO Connection
+getConnectionById db User {userId} connId = ExceptT $ do
+  firstRow toConnection (SEConnectionNotFoundById connId) $
+    DB.query
+      db
+      [sql|
+        SELECT connection_id, agent_conn_id, conn_level, via_contact, via_user_contact_link, custom_user_profile_id,
+          conn_status, conn_type, local_alias, contact_id, group_member_id, snd_file_id, rcv_file_id, user_contact_link_id, created_at
+        FROM connections
+        WHERE user_id = ? AND connection_id = ?
+      |]
+      (userId, connId)
+
 getConnectionsContacts :: DB.Connection -> UserId -> [ConnId] -> IO [ContactRef]
 getConnectionsContacts db userId agentConnIds = do
   DB.execute_ db "DROP TABLE IF EXISTS temp.conn_ids"
@@ -1303,7 +1351,7 @@ getGroupAndMember db User {userId, userContactId} groupMemberId =
           m.group_member_id, m.group_id, m.member_id, m.member_role, m.member_category, m.member_status,
           m.invited_by, m.local_display_name, m.contact_id, m.contact_profile_id, p.contact_profile_id, p.display_name, p.full_name, p.image, p.local_alias,
           c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM group_members m
         JOIN contact_profiles p ON p.contact_profile_id = COALESCE(m.member_profile_id, m.contact_profile_id)
         JOIN groups g ON g.group_id = m.group_id
@@ -1529,7 +1577,7 @@ getGroupMember db user@User {userId} groupId groupMemberId =
           m.group_member_id, m.group_id, m.member_id, m.member_role, m.member_category, m.member_status,
           m.invited_by, m.local_display_name, m.contact_id, m.contact_profile_id, p.contact_profile_id, p.display_name, p.full_name, p.image, p.local_alias,
           c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM group_members m
         JOIN contact_profiles p ON p.contact_profile_id = COALESCE(m.member_profile_id, m.contact_profile_id)
         LEFT JOIN connections c ON c.connection_id = (
@@ -1551,7 +1599,7 @@ getGroupMembers db user@User {userId, userContactId} GroupInfo {groupId} = do
           m.group_member_id, m.group_id, m.member_id, m.member_role, m.member_category, m.member_status,
           m.invited_by, m.local_display_name, m.contact_id, m.contact_profile_id, p.contact_profile_id, p.display_name, p.full_name, p.image, p.local_alias,
           c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM group_members m
         JOIN contact_profiles p ON p.contact_profile_id = COALESCE(m.member_profile_id, m.contact_profile_id)
         LEFT JOIN connections c ON c.connection_id = (
@@ -1654,7 +1702,10 @@ createMemberConnection db userId GroupMember {groupMemberId} agentConnId = do
   void $ createMemberConnection_ db userId groupMemberId agentConnId Nothing 0 currentTs
 
 updateGroupMemberStatus :: DB.Connection -> UserId -> GroupMember -> GroupMemberStatus -> IO ()
-updateGroupMemberStatus db userId GroupMember {groupMemberId} memStatus = do
+updateGroupMemberStatus db userId GroupMember {groupMemberId} = updateGroupMemberStatusById db userId groupMemberId
+
+updateGroupMemberStatusById :: DB.Connection -> UserId -> GroupMemberId -> GroupMemberStatus -> IO ()
+updateGroupMemberStatusById db userId groupMemberId memStatus = do
   currentTs <- getCurrentTime
   DB.execute
     db
@@ -1775,7 +1826,7 @@ saveIntroInvitation db reMember toMember introInv = do
         WHERE group_member_intro_id = :intro_id
       |]
       [ ":intro_status" := GMIntroInvReceived,
-        ":group_queue_info" := groupConnReq introInv,
+        ":group_queue_info" := groupConnReq (introInv :: IntroInvitation),
         ":direct_queue_info" := directConnReq introInv,
         ":updated_at" := currentTs,
         ":intro_id" := introId intro
@@ -1820,12 +1871,13 @@ getIntroduction_ db reMember toMember = ExceptT $ do
        in Right GroupMemberIntro {introId, reMember, toMember, introStatus, introInvitation}
     toIntro _ = Left SEIntroNotFound
 
-createIntroReMember :: DB.Connection -> User -> GroupInfo -> GroupMember -> MemberInfo -> ConnId -> ConnId -> Maybe ProfileId -> ExceptT StoreError IO GroupMember
-createIntroReMember db user@User {userId} gInfo@GroupInfo {groupId} _host@GroupMember {memberContactId, activeConn} memInfo@(MemberInfo _ _ memberProfile) groupAgentConnId directAgentConnId customUserProfileId = do
+createIntroReMember :: DB.Connection -> User -> GroupInfo -> GroupMember -> MemberInfo -> (CommandId, ConnId) -> (CommandId, ConnId) -> Maybe ProfileId -> ExceptT StoreError IO GroupMember
+createIntroReMember db user@User {userId} gInfo@GroupInfo {groupId} _host@GroupMember {memberContactId, activeConn} memInfo@(MemberInfo _ _ memberProfile) (groupCmdId, groupAgentConnId) (directCmdId, directAgentConnId) customUserProfileId = do
   let cLevel = 1 + maybe 0 (connLevel :: Connection -> Int) activeConn
   currentTs <- liftIO getCurrentTime
   Connection {connId = directConnId} <- liftIO $ createConnection_ db userId ConnContact Nothing directAgentConnId memberContactId Nothing customUserProfileId cLevel currentTs
-  (localDisplayName, contactId, memProfileId) <- createContact_ db userId directConnId memberProfile (Just groupId) currentTs
+  liftIO $ setCommandConnId db user directCmdId directConnId
+  (localDisplayName, contactId, memProfileId) <- createContact_ db userId directConnId memberProfile "" (Just groupId) currentTs
   liftIO $ do
     let newMember =
           NewGroupMember
@@ -1838,15 +1890,18 @@ createIntroReMember db user@User {userId} gInfo@GroupInfo {groupId} _host@GroupM
               memProfileId
             }
     member <- createNewMember_ db user gInfo newMember currentTs
-    conn <- createMemberConnection_ db userId (groupMemberId' member) groupAgentConnId memberContactId cLevel currentTs
+    conn@Connection {connId = groupConnId} <- createMemberConnection_ db userId (groupMemberId' member) groupAgentConnId memberContactId cLevel currentTs
+    liftIO $ setCommandConnId db user groupCmdId groupConnId
     pure (member :: GroupMember) {activeConn = Just conn}
 
-createIntroToMemberContact :: DB.Connection -> UserId -> GroupMember -> GroupMember -> ConnId -> ConnId -> Maybe ProfileId -> IO ()
-createIntroToMemberContact db userId GroupMember {memberContactId = viaContactId, activeConn} _to@GroupMember {groupMemberId, localDisplayName} groupAgentConnId directAgentConnId customUserProfileId = do
+createIntroToMemberContact :: DB.Connection -> User -> GroupMember -> GroupMember -> (CommandId, ConnId) -> (CommandId, ConnId) -> Maybe ProfileId -> IO ()
+createIntroToMemberContact db user@User {userId} GroupMember {memberContactId = viaContactId, activeConn} _to@GroupMember {groupMemberId, localDisplayName} (groupCmdId, groupAgentConnId) (directCmdId, directAgentConnId) customUserProfileId = do
   let cLevel = 1 + maybe 0 (connLevel :: Connection -> Int) activeConn
   currentTs <- getCurrentTime
-  void $ createMemberConnection_ db userId groupMemberId groupAgentConnId viaContactId cLevel currentTs
+  Connection {connId = groupConnId} <- createMemberConnection_ db userId groupMemberId groupAgentConnId viaContactId cLevel currentTs
+  setCommandConnId db user groupCmdId groupConnId
   Connection {connId = directConnId} <- createConnection_ db userId ConnContact Nothing directAgentConnId viaContactId Nothing customUserProfileId cLevel currentTs
+  setCommandConnId db user directCmdId directConnId
   contactId <- createMemberContact_ directConnId currentTs
   updateMember_ contactId currentTs
   where
@@ -1896,7 +1951,7 @@ getViaGroupMember db User {userId, userContactId} Contact {contactId} =
           m.group_member_id, m.group_id, m.member_id, m.member_role, m.member_category, m.member_status,
           m.invited_by, m.local_display_name, m.contact_id, m.contact_profile_id, p.contact_profile_id, p.display_name, p.full_name, p.image, p.local_alias,
           c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM group_members m
         JOIN contacts ct ON ct.contact_id = m.contact_id
         JOIN contact_profiles p ON p.contact_profile_id = COALESCE(m.member_profile_id, m.contact_profile_id)
@@ -1928,7 +1983,7 @@ getViaGroupContact db User {userId} GroupMember {groupMemberId} =
         SELECT
           ct.contact_id, ct.contact_profile_id, ct.local_display_name, p.display_name, p.full_name, p.image, p.local_alias, ct.via_group, ct.enable_ntfs, ct.created_at, ct.updated_at,
           c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id,
-          c.conn_status, c.conn_type, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
+          c.conn_status, c.conn_type, c.local_alias, c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM contacts ct
         JOIN contact_profiles p ON ct.contact_profile_id = p.contact_profile_id
         JOIN connections c ON c.connection_id = (
@@ -1965,6 +2020,25 @@ createSndFileTransfer db userId Contact {contactId} filePath FileInvitation {fil
     (fileId, fileStatus, connId, currentTs, currentTs)
   pure fileId
 
+createSndDirectFileTransfer :: DB.Connection -> UserId -> Contact -> FilePath -> FileInvitation -> Integer -> IO Int64
+createSndDirectFileTransfer db userId Contact {contactId} filePath FileInvitation {fileName, fileSize} chunkSize = do
+  currentTs <- getCurrentTime
+  DB.execute
+    db
+    "INSERT INTO files (user_id, contact_id, file_name, file_path, file_size, chunk_size, ci_file_status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    (userId, contactId, fileName, filePath, fileSize, chunkSize, CIFSSndStored, currentTs, currentTs)
+  insertedRowId db
+
+createSndDirectFTConnection :: DB.Connection -> User -> Int64 -> (CommandId, ConnId) -> IO ()
+createSndDirectFTConnection db user@User {userId} fileId (cmdId, acId) = do
+  currentTs <- getCurrentTime
+  Connection {connId} <- createSndFileConnection_ db userId fileId acId
+  setCommandConnId db user cmdId connId
+  DB.execute
+    db
+    "INSERT INTO snd_files (file_id, file_status, connection_id, created_at, updated_at) VALUES (?,?,?,?,?)"
+    (fileId, FSAccepted, connId, currentTs, currentTs)
+
 createSndGroupFileTransfer :: DB.Connection -> UserId -> GroupInfo -> FilePath -> FileInvitation -> Integer -> IO Int64
 createSndGroupFileTransfer db userId GroupInfo {groupId} filePath FileInvitation {fileName, fileSize} chunkSize = do
   currentTs <- getCurrentTime
@@ -1974,10 +2048,11 @@ createSndGroupFileTransfer db userId GroupInfo {groupId} filePath FileInvitation
     (userId, groupId, fileName, filePath, fileSize, chunkSize, CIFSSndStored, currentTs, currentTs)
   insertedRowId db
 
-createSndGroupFileTransferConnection :: DB.Connection -> UserId -> Int64 -> ConnId -> GroupMember -> IO ()
-createSndGroupFileTransferConnection db userId fileId acId GroupMember {groupMemberId} = do
+createSndGroupFileTransferConnection :: DB.Connection -> User -> Int64 -> (CommandId, ConnId) -> GroupMember -> IO ()
+createSndGroupFileTransferConnection db user@User {userId} fileId (cmdId, acId) GroupMember {groupMemberId} = do
   currentTs <- getCurrentTime
   Connection {connId} <- createSndFileConnection_ db userId fileId acId
+  setCommandConnId db user cmdId connId
   DB.execute
     db
     "INSERT INTO snd_files (file_id, file_status, connection_id, group_member_id, created_at, updated_at) VALUES (?,?,?,?,?,?)"
@@ -2031,6 +2106,19 @@ getGroupFileIdBySharedMsgId db userId groupId sharedMsgId =
         WHERE i.user_id = ? AND i.group_id = ? AND i.shared_msg_id = ?
       |]
       (userId, groupId, sharedMsgId)
+
+getDirectFileIdBySharedMsgId :: DB.Connection -> User -> Contact -> SharedMsgId -> ExceptT StoreError IO Int64
+getDirectFileIdBySharedMsgId db User {userId} Contact {contactId} sharedMsgId =
+  ExceptT . firstRow fromOnly (SEFileIdNotFoundBySharedMsgId sharedMsgId) $
+    DB.query
+      db
+      [sql|
+        SELECT f.file_id
+        FROM files f
+        JOIN chat_items i ON i.chat_item_id = f.chat_item_id
+        WHERE i.user_id = ? AND i.contact_id = ? AND i.shared_msg_id = ?
+      |]
+      (userId, contactId, sharedMsgId)
 
 getChatRefByFileId :: DB.Connection -> User -> Int64 -> ExceptT StoreError IO ChatRef
 getChatRefByFileId db User {userId} fileId =
@@ -2427,7 +2515,7 @@ createSndMsgDelivery db sndMsgDelivery messageId = do
   createMsgDeliveryEvent_ db msgDeliveryId MDSSndAgent currentTs
 
 createNewMessageAndRcvMsgDelivery :: DB.Connection -> ConnOrGroupId -> NewMessage -> Maybe SharedMsgId -> RcvMsgDelivery -> IO RcvMessage
-createNewMessageAndRcvMsgDelivery db connOrGroupId NewMessage {chatMsgEvent, msgBody} sharedMsgId_ RcvMsgDelivery {connId, agentMsgId, agentMsgMeta} = do
+createNewMessageAndRcvMsgDelivery db connOrGroupId NewMessage {chatMsgEvent, msgBody} sharedMsgId_ RcvMsgDelivery {connId, agentMsgId, agentMsgMeta, agentAckCmdId} = do
   currentTs <- getCurrentTime
   DB.execute
     db
@@ -2436,8 +2524,8 @@ createNewMessageAndRcvMsgDelivery db connOrGroupId NewMessage {chatMsgEvent, msg
   msgId <- insertedRowId db
   DB.execute
     db
-    "INSERT INTO msg_deliveries (message_id, connection_id, agent_msg_id, agent_msg_meta, chat_ts, created_at, updated_at) VALUES (?,?,?,?,?,?,?)"
-    (msgId, connId, agentMsgId, msgMetaJson agentMsgMeta, snd $ broker agentMsgMeta, currentTs, currentTs)
+    "INSERT INTO msg_deliveries (message_id, connection_id, agent_msg_id, agent_msg_meta, agent_ack_cmd_id, chat_ts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)"
+    (msgId, connId, agentMsgId, msgMetaJson agentMsgMeta, agentAckCmdId, snd $ broker agentMsgMeta, currentTs, currentTs)
   msgDeliveryId <- insertedRowId db
   createMsgDeliveryEvent_ db msgDeliveryId MDSRcvAgent currentTs
   pure RcvMessage {msgId, chatMsgEvent, sharedMsgId_, msgBody}
@@ -2453,12 +2541,12 @@ createSndMsgDeliveryEvent db connId agentMsgId sndMsgDeliveryStatus = do
     currentTs <- getCurrentTime
     createMsgDeliveryEvent_ db msgDeliveryId sndMsgDeliveryStatus currentTs
 
-createRcvMsgDeliveryEvent :: DB.Connection -> Int64 -> AgentMsgId -> MsgDeliveryStatus 'MDRcv -> ExceptT StoreError IO ()
-createRcvMsgDeliveryEvent db connId agentMsgId rcvMsgDeliveryStatus = do
-  msgDeliveryId <- getMsgDeliveryId_ db connId agentMsgId
-  liftIO $ do
+createRcvMsgDeliveryEvent :: DB.Connection -> Int64 -> CommandId -> MsgDeliveryStatus 'MDRcv -> IO ()
+createRcvMsgDeliveryEvent db connId cmdId rcvMsgDeliveryStatus = do
+  msgDeliveryId <- getMsgDeliveryIdByCmdId_ db connId cmdId
+  forM_ msgDeliveryId $ \mdId -> do
     currentTs <- getCurrentTime
-    createMsgDeliveryEvent_ db msgDeliveryId rcvMsgDeliveryStatus currentTs
+    createMsgDeliveryEvent_ db mdId rcvMsgDeliveryStatus currentTs
 
 createSndMsgDelivery_ :: DB.Connection -> SndMsgDelivery -> MessageId -> UTCTime -> IO Int64
 createSndMsgDelivery_ db SndMsgDelivery {connId, agentMsgId} messageId createdAt = do
@@ -2495,6 +2583,19 @@ getMsgDeliveryId_ db connId agentMsgId =
         LIMIT 1
       |]
       (connId, agentMsgId)
+
+getMsgDeliveryIdByCmdId_ :: DB.Connection -> Int64 -> CommandId -> IO (Maybe AgentMsgId)
+getMsgDeliveryIdByCmdId_ db connId cmdId =
+  maybeFirstRow fromOnly $
+    DB.query
+      db
+      [sql|
+        SELECT msg_delivery_id
+        FROM msg_deliveries
+        WHERE connection_id = ? AND agent_ack_cmd_id = ?
+        LIMIT 1
+      |]
+      (connId, cmdId)
 
 createPendingGroupMessage :: DB.Connection -> Int64 -> MessageId -> Maybe Int64 -> IO ()
 createPendingGroupMessage db groupMemberId messageId introId_ = do
@@ -2687,7 +2788,7 @@ getDirectChatPreviews_ db User {userId} = do
           -- Contact
           ct.contact_id, ct.contact_profile_id, ct.local_display_name, ct.via_group, cp.display_name, cp.full_name, cp.image, cp.local_alias, ct.enable_ntfs, ct.created_at, ct.updated_at,
           -- Connection
-          c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type,
+          c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type, c.local_alias,
           c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at,
           -- ChatStats
           COALESCE(ChatStats.UnreadCount, 0), COALESCE(ChatStats.MinUnread, 0),
@@ -2836,13 +2937,13 @@ getContactConnectionChatPreviews_ db User {userId} _ =
     <$> DB.query
       db
       [sql|
-        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, created_at, updated_at
+        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, conn_req_inv, local_alias, created_at, updated_at
         FROM connections
         WHERE user_id = ? AND conn_type = ? AND contact_id IS NULL AND conn_level = 0 AND via_contact IS NULL
       |]
       (userId, ConnContact)
   where
-    toContactConnectionChatPreview :: (Int64, ConnId, ConnStatus, Maybe ByteString, Maybe Int64, Maybe Int64, UTCTime, UTCTime) -> AChat
+    toContactConnectionChatPreview :: (Int64, ConnId, ConnStatus, Maybe ByteString, Maybe Int64, Maybe Int64, Maybe ConnReqInvitation, LocalAlias, UTCTime, UTCTime) -> AChat
     toContactConnectionChatPreview connRow =
       let conn = toPendingContactConnection connRow
           stats = ChatStats {unreadCount = 0, minUnreadItemId = 0}
@@ -2854,7 +2955,7 @@ getPendingContactConnection db userId connId = do
     DB.query
       db
       [sql|
-        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, created_at, updated_at
+        SELECT connection_id, agent_conn_id, conn_status, via_contact_uri_hash, via_user_contact_link, custom_user_profile_id, conn_req_inv, local_alias, created_at, updated_at
         FROM connections
         WHERE user_id = ?
           AND connection_id = ?
@@ -2888,9 +2989,9 @@ updateGroupSettings :: DB.Connection -> User -> Int64 -> ChatSettings -> IO ()
 updateGroupSettings db User {userId} groupId ChatSettings {enableNtfs} =
   DB.execute db "UPDATE groups SET enable_ntfs = ? WHERE user_id = ? AND group_id = ?" (enableNtfs, userId, groupId)
 
-toPendingContactConnection :: (Int64, ConnId, ConnStatus, Maybe ByteString, Maybe Int64, Maybe Int64, UTCTime, UTCTime) -> PendingContactConnection
-toPendingContactConnection (pccConnId, acId, pccConnStatus, connReqHash, viaUserContactLink, customUserProfileId, createdAt, updatedAt) =
-  PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = isJust connReqHash, viaUserContactLink, customUserProfileId, createdAt, updatedAt}
+toPendingContactConnection :: (Int64, ConnId, ConnStatus, Maybe ByteString, Maybe Int64, Maybe Int64, Maybe ConnReqInvitation, LocalAlias, UTCTime, UTCTime) -> PendingContactConnection
+toPendingContactConnection (pccConnId, acId, pccConnStatus, connReqHash, viaUserContactLink, customUserProfileId, connReqInv, localAlias, createdAt, updatedAt) =
+  PendingContactConnection {pccConnId, pccAgentConnId = AgentConnId acId, pccConnStatus, viaContactUri = isJust connReqHash, viaUserContactLink, customUserProfileId, connReqInv, localAlias, createdAt, updatedAt}
 
 getDirectChat :: DB.Connection -> User -> Int64 -> ChatPagination -> Maybe String -> ExceptT StoreError IO (Chat 'CTDirect)
 getDirectChat db user contactId pagination search_ = do
@@ -3012,8 +3113,8 @@ getDirectChatStats_ db userId contactId =
     toChatStats' [statsRow] = toChatStats statsRow
     toChatStats' _ = ChatStats {unreadCount = 0, minUnreadItemId = 0}
 
-getContactIdByName :: DB.Connection -> UserId -> ContactName -> ExceptT StoreError IO Int64
-getContactIdByName db userId cName =
+getContactIdByName :: DB.Connection -> User -> ContactName -> ExceptT StoreError IO Int64
+getContactIdByName db User {userId} cName =
   ExceptT . firstRow fromOnly (SEContactNotFoundByName cName) $
     DB.query db "SELECT contact_id FROM contacts WHERE user_id = ? AND local_display_name = ?" (userId, cName)
 
@@ -3027,7 +3128,7 @@ getContact db userId contactId =
           -- Contact
           ct.contact_id, ct.contact_profile_id, ct.local_display_name, ct.via_group, cp.display_name, cp.full_name, cp.image, cp.local_alias, ct.enable_ntfs, ct.created_at, ct.updated_at,
           -- Connection
-          c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type,
+          c.connection_id, c.agent_conn_id, c.conn_level, c.via_contact, c.via_user_contact_link, c.custom_user_profile_id, c.conn_status, c.conn_type, c.local_alias,
           c.contact_id, c.group_member_id, c.snd_file_id, c.rcv_file_id, c.user_contact_link_id, c.created_at
         FROM contacts ct
         JOIN contact_profiles cp ON ct.contact_profile_id = cp.contact_profile_id
@@ -3846,6 +3947,133 @@ getCalls db User {userId} = do
     toCall :: (ContactId, CallId, ChatItemId, CallState, UTCTime) -> Call
     toCall (contactId, callId, chatItemId, callState, callTs) = Call {contactId, callId, chatItemId, callState, callTs}
 
+createCommand :: DB.Connection -> User -> Maybe Int64 -> CommandFunction -> IO CommandId
+createCommand db User {userId} connId commandFunction = do
+  currentTs <- getCurrentTime
+  DB.execute
+    db
+    [sql|
+      INSERT INTO commands (connection_id, command_function, command_status, user_id, created_at, updated_at)
+      VALUES (?,?,?,?,?,?)
+    |]
+    (connId, commandFunction, CSCreated, userId, currentTs, currentTs)
+  insertedRowId db
+
+setCommandConnId :: DB.Connection -> User -> CommandId -> Int64 -> IO ()
+setCommandConnId db User {userId} cmdId connId = do
+  updatedAt <- getCurrentTime
+  DB.execute
+    db
+    [sql|
+      UPDATE commands
+      SET connection_id = ?, updated_at = ?
+      WHERE user_id = ? AND command_id = ?
+    |]
+    (connId, updatedAt, userId, cmdId)
+
+deleteCommand :: DB.Connection -> User -> CommandId -> IO ()
+deleteCommand db User {userId} cmdId =
+  DB.execute db "DELETE FROM commands WHERE user_id = ? AND command_id = ?" (userId, cmdId)
+
+updateCommandStatus :: DB.Connection -> User -> CommandId -> CommandStatus -> IO ()
+updateCommandStatus db User {userId} cmdId status = do
+  updatedAt <- getCurrentTime
+  DB.execute
+    db
+    [sql|
+      UPDATE commands
+      SET command_status = ?, updated_at = ?
+      WHERE user_id = ? AND command_id = ?
+    |]
+    (status, updatedAt, userId, cmdId)
+
+getCommandDataByCorrId :: DB.Connection -> User -> ACorrId -> IO (Maybe CommandData)
+getCommandDataByCorrId db User {userId} corrId =
+  maybeFirstRow toCommandData $
+    DB.query
+      db
+      [sql|
+        SELECT command_id, connection_id, command_function, command_status
+        FROM commands
+        WHERE user_id = ? AND command_id = ?
+      |]
+      (userId, commandId corrId)
+  where
+    toCommandData :: (CommandId, Maybe Int64, CommandFunction, CommandStatus) -> CommandData
+    toCommandData (cmdId, cmdConnId, cmdFunction, cmdStatus) = CommandData {cmdId, cmdConnId, cmdFunction, cmdStatus}
+
+setConnConnReqInv :: DB.Connection -> User -> Int64 -> ConnReqInvitation -> IO ()
+setConnConnReqInv db User {userId} connId connReq = do
+  updatedAt <- getCurrentTime
+  DB.execute
+    db
+    [sql|
+      UPDATE connections
+      SET conn_req_inv = ?, updated_at = ?
+      WHERE user_id = ? AND connection_id = ?
+    |]
+    (connReq, updatedAt, userId, connId)
+
+getXGrpMemIntroContDirect :: DB.Connection -> User -> Contact -> IO (Maybe (Int64, XGrpMemIntroCont))
+getXGrpMemIntroContDirect db User {userId} Contact {contactId} = do
+  fmap join . maybeFirstRow toCont $
+    DB.query
+      db
+      [sql|
+        SELECT ch.connection_id, g.group_id, m.group_member_id, m.member_id, c.conn_req_inv
+        FROM contacts ct
+        JOIN group_members m ON m.contact_id = ct.contact_id
+        LEFT JOIN connections c ON c.connection_id = (
+          SELECT MAX(cc.connection_id)
+          FROM connections cc
+          WHERE cc.group_member_id = m.group_member_id
+        )
+        JOIN groups g ON g.group_id = m.group_id AND g.group_id = ct.via_group
+        JOIN group_members mh ON mh.group_id = g.group_id
+        LEFT JOIN connections ch ON ch.connection_id = (
+          SELECT max(cc.connection_id)
+          FROM connections cc
+          where cc.group_member_id = mh.group_member_id
+        )
+        WHERE ct.user_id = ? AND ct.contact_id = ? AND mh.member_category = ?
+      |]
+      (userId, contactId, GCHostMember)
+  where
+    toCont :: (Int64, GroupId, GroupMemberId, MemberId, Maybe ConnReqInvitation) -> Maybe (Int64, XGrpMemIntroCont)
+    toCont (hostConnId, groupId, groupMemberId, memberId, connReq_) = case connReq_ of
+      Just groupConnReq -> Just (hostConnId, XGrpMemIntroCont {groupId, groupMemberId, memberId, groupConnReq})
+      _ -> Nothing
+
+getXGrpMemIntroContGroup :: DB.Connection -> User -> GroupMember -> IO (Maybe (Int64, ConnReqInvitation))
+getXGrpMemIntroContGroup db User {userId} GroupMember {groupMemberId} = do
+  fmap join . maybeFirstRow toCont $
+    DB.query
+      db
+      [sql|
+        SELECT ch.connection_id, c.conn_req_inv
+        FROM group_members m
+        JOIN contacts ct ON ct.contact_id = m.contact_id
+        LEFT JOIN connections c ON c.connection_id = (
+          SELECT MAX(cc.connection_id)
+          FROM connections cc
+          WHERE cc.contact_id = ct.contact_id
+        )
+        JOIN groups g ON g.group_id = m.group_id AND g.group_id = ct.via_group
+        JOIN group_members mh ON mh.group_id = g.group_id
+        LEFT JOIN connections ch ON ch.connection_id = (
+          SELECT max(cc.connection_id)
+          FROM connections cc
+          where cc.group_member_id = mh.group_member_id
+        )
+        WHERE m.user_id = ? AND m.group_member_id = ? AND mh.member_category = ?
+      |]
+      (userId, groupMemberId, GCHostMember)
+  where
+    toCont :: (Int64, Maybe ConnReqInvitation) -> Maybe (Int64, ConnReqInvitation)
+    toCont (hostConnId, connReq_) = case connReq_ of
+      Just connReq -> Just (hostConnId, connReq)
+      _ -> Nothing
+
 -- | Saves unique local display name based on passed displayName, suffixed with _N if required.
 -- This function should be called inside transaction.
 withLocalDisplayName :: forall a. DB.Connection -> UserId -> Text -> (Text -> IO (Either StoreError a)) -> IO (Either StoreError a)
@@ -3932,6 +4160,7 @@ data StoreError
   | SESharedMsgIdNotFoundByFileId {fileId :: FileTransferId}
   | SEFileIdNotFoundBySharedMsgId {sharedMsgId :: SharedMsgId}
   | SEConnectionNotFound {agentConnId :: AgentConnId}
+  | SEConnectionNotFoundById {connId :: Int64}
   | SEPendingConnectionNotFound {connId :: Int64}
   | SEIntroNotFound
   | SEUniqueID

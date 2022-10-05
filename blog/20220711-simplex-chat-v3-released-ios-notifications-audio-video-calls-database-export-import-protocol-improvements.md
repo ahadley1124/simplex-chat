@@ -1,3 +1,10 @@
+---
+layout: layouts/article.html
+title: "SimpleX announces SimpleX Chat v3"
+date: 2022-07-11
+permalink: "/blog/20220711-simplex-chat-v3-released-ios-notifications-audio-video-calls-database-export-import-protocol-improvements.html"
+---
+
 # SimpleX announces SimpleX Chat v3
 
 **Published:** Jul 11, 2022
@@ -5,6 +12,7 @@
 ## New in version 3
 
 - [instant notifications for iOS](#instant-notifications-for-ios)
+- [end-to-end encrypted audio/video calls](#end-to-end-encrypted-audiovideo-calls)
 - [database export and import](#database-export-and-import)
 - [protocol privacy and performance improvements](#protocol-privacy-and-performance-improvements)
 

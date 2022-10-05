@@ -6,10 +6,11 @@ import android.util.Log
 import androidx.lifecycle.*
 import androidx.work.*
 import chat.simplex.app.model.*
-import chat.simplex.app.views.helpers.getFilesDirectory
-import chat.simplex.app.views.helpers.withApi
+import chat.simplex.app.views.helpers.*
 import chat.simplex.app.views.onboarding.OnboardingStage
+import chat.simplex.app.views.usersettings.NotificationsMode
 import kotlinx.coroutines.*
+import kotlinx.serialization.decodeFromString
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.*
@@ -26,21 +27,53 @@ external fun pipeStdOutToSocket(socketName: String) : Int
 
 // SimpleX API
 typealias ChatCtrl = Long
-external fun chatInit(path: String): ChatCtrl
+external fun chatMigrateInit(dbPath: String, dbKey: String): Array<Any>
 external fun chatSendCmd(ctrl: ChatCtrl, msg: String): String
 external fun chatRecvMsg(ctrl: ChatCtrl): String
 external fun chatRecvMsgWait(ctrl: ChatCtrl, timeout: Int): String
 external fun chatParseMarkdown(str: String): String
 
 class SimplexApp: Application(), LifecycleEventObserver {
-  val chatController: ChatController by lazy {
-    val ctrl = chatInit(getFilesDirectory(applicationContext))
-    ChatController(ctrl, ntfManager, applicationContext, appPreferences)
+  lateinit var chatController: ChatController
+
+  fun initChatController(useKey: String? = null, startChat: Boolean = true) {
+    val dbKey = useKey ?: DatabaseUtils.useDatabaseKey() ?: ""
+    val dbAbsolutePathPrefix = getFilesDirectory(SimplexApp.context)
+    val migrated: Array<Any> = chatMigrateInit(dbAbsolutePathPrefix, dbKey)
+    val res: DBMigrationResult = kotlin.runCatching {
+      json.decodeFromString<DBMigrationResult>(migrated[0] as String)
+    }.getOrElse { DBMigrationResult.Unknown(migrated[0] as String) }
+    val ctrl = if (res is DBMigrationResult.OK) {
+      migrated[1] as Long
+    } else null
+    if (::chatController.isInitialized) {
+      chatController.ctrl = ctrl
+    } else {
+      chatController = ChatController(ctrl, ntfManager, applicationContext, appPreferences)
+    }
+    chatModel.chatDbEncrypted.value = dbKey != ""
+    chatModel.chatDbStatus.value = res
+    if (res != DBMigrationResult.OK) {
+      Log.d(TAG, "Unable to migrate successfully: $res")
+    } else if (startChat) {
+      // If we migrated successfully means previous re-encryption process on database level finished successfully too
+      if (appPreferences.encryptionStartedAt.get() != null) appPreferences.encryptionStartedAt.set(null)
+      withApi {
+        val user = chatController.apiGetActiveUser()
+        if (user == null) {
+          chatModel.onboardingStage.value = OnboardingStage.Step1_SimpleXInfo
+        } else {
+          chatController.startChat(user)
+          chatController.showBackgroundServiceNoticeIfNeeded()
+          if (appPreferences.notificationsMode.get() == NotificationsMode.SERVICE.name)
+            SimplexService.start(applicationContext)
+        }
+      }
+    }
   }
 
-  val chatModel: ChatModel by lazy {
-    chatController.chatModel
-  }
+  val chatModel: ChatModel
+    get() = chatController.chatModel
 
   private val ntfManager: NtfManager by lazy {
     NtfManager(applicationContext, appPreferences)
@@ -53,36 +86,39 @@ class SimplexApp: Application(), LifecycleEventObserver {
   override fun onCreate() {
     super.onCreate()
     context = this
+    initChatController()
     ProcessLifecycleOwner.get().lifecycle.addObserver(this)
-    withApi {
-      val user = chatController.apiGetActiveUser()
-      if (user == null) {
-        chatModel.onboardingStage.value = OnboardingStage.Step1_SimpleXInfo
-      } else {
-        chatController.startChat(user)
-      }
-    }
   }
 
   override fun onStateChanged(source: LifecycleOwner, event: Lifecycle.Event) {
     Log.d(TAG, "onStateChanged: $event")
     withApi {
       when (event) {
-        Lifecycle.Event.ON_STOP ->
-          if (!appPreferences.runServiceInBackground.get()) SimplexService.stop(applicationContext)
-        Lifecycle.Event.ON_START ->
-          if (chatModel.chatRunning.value != false)  SimplexService.start(applicationContext)
-        Lifecycle.Event.ON_RESUME ->
+        Lifecycle.Event.ON_RESUME -> {
           if (chatModel.onboardingStage.value == OnboardingStage.OnboardingComplete) {
             chatController.showBackgroundServiceNoticeIfNeeded()
           }
+          /**
+           * We're starting service here instead of in [Lifecycle.Event.ON_START] because
+           * after calling [ChatController.showBackgroundServiceNoticeIfNeeded] notification mode in prefs can be changed.
+           * It can happen when app was started and a user enables battery optimization while app in background
+           * */
+          if (chatModel.chatRunning.value != false && appPreferences.notificationsMode.get() == NotificationsMode.SERVICE.name)
+            SimplexService.start(applicationContext)
+        }
         else -> {}
       }
     }
   }
 
   fun allowToStartServiceAfterAppExit() = with(chatModel.controller) {
-    appPrefs.runServiceInBackground.get() && isIgnoringBatteryOptimizations(chatModel.controller.appContext)
+    appPrefs.notificationsMode.get() == NotificationsMode.SERVICE.name &&
+        (!NotificationsMode.SERVICE.requiresIgnoringBattery || isIgnoringBatteryOptimizations(chatModel.controller.appContext))
+  }
+
+  private fun allowToStartPeriodically() = with(chatModel.controller) {
+    appPrefs.notificationsMode.get() == NotificationsMode.PERIODIC.name &&
+        (!NotificationsMode.PERIODIC.requiresIgnoringBattery || isIgnoringBatteryOptimizations(chatModel.controller.appContext))
   }
 
   /*
@@ -107,6 +143,13 @@ class SimplexApp: Application(), LifecycleEventObserver {
       .build()
     Log.d(TAG, "ServiceStartWorker: Scheduling period work every ${SimplexService.SERVICE_START_WORKER_INTERVAL_MINUTES} minutes")
     WorkManager.getInstance(context)?.enqueueUniquePeriodicWork(SimplexService.SERVICE_START_WORKER_WORK_NAME_PERIODIC, workPolicy, work)
+  }
+
+  fun schedulePeriodicWakeUp() = CoroutineScope(Dispatchers.Default).launch {
+    if (!allowToStartPeriodically()) {
+      return@launch
+    }
+    MessagesFetcherWorker.scheduleWork()
   }
 
   companion object {

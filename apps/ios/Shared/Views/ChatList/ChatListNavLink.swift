@@ -9,8 +9,24 @@
 import SwiftUI
 import SimpleXChat
 
+private let rowHeights: [DynamicTypeSize: CGFloat] = [
+    .xSmall: 68,
+    .small: 72,
+    .medium: 76,
+    .large: 80,
+    .xLarge: 88,
+    .xxLarge: 94,
+    .xxxLarge: 104,
+    .accessibility1: 90,
+    .accessibility2: 100,
+    .accessibility3: 120,
+    .accessibility4: 130,
+    .accessibility5: 140
+]
+
 struct ChatListNavLink: View {
     @EnvironmentObject var chatModel: ChatModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State var chat: Chat
     @State private var showContactRequestDialog = false
     @State private var showJoinGroupDialog = false
@@ -41,8 +57,10 @@ struct ChatListNavLink: View {
             }
         }
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            clearChatButton()
-            Button(role: .destructive) {
+            if !chat.chatItems.isEmpty {
+                clearChatButton()
+            }
+            Button {
                 AlertManager.shared.showAlert(
                     contact.ready
                     ? deleteContactAlert(chat.chatInfo)
@@ -51,8 +69,9 @@ struct ChatListNavLink: View {
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+            .tint(.red)
         }
-        .frame(height: 80)
+        .frame(height: rowHeights[dynamicTypeSize])
 
         if contact.ready {
             v
@@ -67,7 +86,7 @@ struct ChatListNavLink: View {
         switch (groupInfo.membership.memberStatus) {
         case .memInvited:
             ChatPreviewView(chat: chat)
-                .frame(height: 80)
+                .frame(height: rowHeights[dynamicTypeSize])
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     joinGroupButton(groupInfo.hostConnCustomUserProfileId)
                     if groupInfo.canDelete {
@@ -83,7 +102,7 @@ struct ChatListNavLink: View {
                 }
         case .memAccepted:
             ChatPreviewView(chat: chat)
-                .frame(height: 80)
+                .frame(height: rowHeights[dynamicTypeSize])
                 .onTapGesture {
                     AlertManager.shared.showAlert(groupInvitationAcceptedAlert())
                 }
@@ -94,14 +113,16 @@ struct ChatListNavLink: View {
                 label: { ChatPreviewView(chat: chat) },
                 disabled: !groupInfo.ready
             )
-            .frame(height: 80)
+            .frame(height: rowHeights[dynamicTypeSize])
             .swipeActions(edge: .leading, allowsFullSwipe: true) {
                 if chat.chatStats.unreadCount > 0 {
                     markReadButton()
                 }
             }
             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                clearChatButton()
+                if !chat.chatItems.isEmpty {
+                    clearChatButton()
+                }
                 if (groupInfo.membership.memberCurrent) {
                     Button {
                         AlertManager.shared.showAlert(leaveGroupAlert(groupInfo))
@@ -147,11 +168,12 @@ struct ChatListNavLink: View {
     }
 
     @ViewBuilder private func deleteGroupChatButton(_ groupInfo: GroupInfo) -> some View {
-        Button(role: .destructive) {
-            AlertManager.shared.showAlert(deleteGroupAlert(.group(groupInfo: groupInfo)))
+        Button {
+            AlertManager.shared.showAlert(deleteGroupAlert(groupInfo))
         } label: {
             Label("Delete", systemImage: "trash")
         }
+        .tint(.red)
     }
 
     private func contactRequestNavLink(_ contactRequest: UserContactRequest) -> some View {
@@ -161,13 +183,14 @@ struct ChatListNavLink: View {
                 Task { await acceptContactRequest(contactRequest) }
             } label: { Label("Accept", systemImage: chatModel.incognito ? "theatermasks" : "checkmark") }
                 .tint(chatModel.incognito ? .indigo : .accentColor)
-            Button(role: .destructive) {
+            Button {
                 AlertManager.shared.showAlert(rejectContactRequestAlert(contactRequest))
             } label: {
                 Label("Reject", systemImage: "multiply")
             }
+            .tint(.red)
         }
-        .frame(height: 80)
+        .frame(height: rowHeights[dynamicTypeSize])
         .onTapGesture { showContactRequestDialog = true }
         .confirmationDialog("Connection request", isPresented: $showContactRequestDialog, titleVisibility: .visible) {
             Button(chatModel.incognito ? "Accept incognito" : "Accept contact") { Task { await acceptContactRequest(contactRequest) } }
@@ -178,13 +201,14 @@ struct ChatListNavLink: View {
     private func contactConnectionNavLink(_ contactConnection: PendingContactConnection) -> some View {
         ContactConnectionView(contactConnection: contactConnection)
         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            Button(role: .destructive) {
+            Button {
                 AlertManager.shared.showAlert(deleteContactConnectionAlert(contactConnection))
             } label: {
                 Label("Delete", systemImage: "trash")
             }
+            .tint(.red)
         }
-        .frame(height: 80)
+        .frame(height: rowHeights[dynamicTypeSize])
         .onTapGesture {
             AlertManager.shared.showAlertMsg(
                 title:
@@ -211,15 +235,19 @@ struct ChatListNavLink: View {
         )
     }
 
-    private func deleteGroupAlert(_ chatInfo: ChatInfo) -> Alert {
+    private func deleteGroupAlert(_ groupInfo: GroupInfo) -> Alert {
         Alert(
             title: Text("Delete group?"),
-            message: Text("Group will be deleted for all members - this cannot be undone!"),
+            message: deleteGroupAlertMessage(groupInfo),
             primaryButton: .destructive(Text("Delete")) {
                 Task { await deleteChat(chat) }
             },
             secondaryButton: .cancel()
         )
+    }
+
+    private func deleteGroupAlertMessage(_ groupInfo: GroupInfo) -> Text {
+        groupInfo.membership.memberCurrent ? Text("Group will be deleted for all members - this cannot be undone!") : Text("Group will be deleted for you - this cannot be undone!")
     }
 
     private func clearChatAlert() -> Alert {
@@ -337,9 +365,15 @@ func joinGroup(_ groupId: Int64) {
                 await deleteGroup()
             }
         } catch let error {
-            let err = responseError(error)
-            AlertManager.shared.showAlert(Alert(title: Text("Error joining group"), message: Text(err)))
-            logger.error("apiJoinGroup error: \(err)")
+            switch error as? ChatResponse {
+            case .chatCmdError(.errorAgent(.BROKER(.TIMEOUT))):
+                AlertManager.shared.showAlertMsg(title: "Connection timeout", message: "Please check your network connection and try again.")
+            case .chatCmdError(.errorAgent(.BROKER(.NETWORK))):
+                AlertManager.shared.showAlertMsg(title: "Connection error", message: "Please check your network connection and try again.")
+            default:
+                logger.error("apiJoinGroup error: \(responseError(error))")
+                AlertManager.shared.showAlertMsg(title: "Error joining group", message: "\(responseError(error))")
+            }
         }
 
         func deleteGroup() async {
@@ -371,6 +405,6 @@ struct ChatListNavLink_Previews: PreviewProvider {
                 chatItems: []
             ))
         }
-        .previewLayout(.fixed(width: 360, height: 80))
+        .previewLayout(.fixed(width: 360, height: 82))
     }
 }

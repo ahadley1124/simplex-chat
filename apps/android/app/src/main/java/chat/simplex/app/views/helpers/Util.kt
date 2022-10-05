@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import android.text.Spanned
 import android.text.SpannedString
 import android.text.style.*
+import android.util.Base64
 import android.util.Log
 import android.view.ViewTreeObserver
 import androidx.annotation.StringRes
@@ -23,8 +24,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.*
 import androidx.core.content.FileProvider
 import androidx.core.text.HtmlCompat
-import chat.simplex.app.BuildConfig
-import chat.simplex.app.SimplexApp
+import chat.simplex.app.*
 import chat.simplex.app.model.CIFile
 import kotlinx.coroutines.*
 import java.io.*
@@ -212,6 +212,7 @@ private fun spannableStringToAnnotatedString(
 
 // maximum image file size to be auto-accepted
 const val MAX_IMAGE_SIZE: Long = 236700
+const val MAX_IMAGE_SIZE_AUTO_RCV: Long = MAX_IMAGE_SIZE * 2
 const val MAX_FILE_SIZE: Long = 8000000
 
 fun getFilesDirectory(context: Context): String {
@@ -320,6 +321,32 @@ fun saveImage(context: Context, image: Bitmap): String? {
   }
 }
 
+fun saveAnimImage(context: Context, uri: Uri): String? {
+  return try {
+    val filename = getFileName(context, uri)?.lowercase()
+    var ext = when {
+      // remove everything but extension
+      filename?.contains(".") == true -> filename.replaceBeforeLast('.', "").replace(".", "")
+      else -> "gif"
+    }
+    // Just in case the image has a strange extension
+    if (ext.length < 3 || ext.length > 4) ext = "gif"
+    val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    val fileToSave = uniqueCombine(context, "IMG_${timestamp}.$ext")
+    val file = File(getAppFilePath(context, fileToSave))
+    val output = FileOutputStream(file)
+    context.contentResolver.openInputStream(uri)!!.use { input ->
+      output.use { output ->
+        input.copyTo(output)
+      }
+    }
+    fileToSave
+  } catch (e: Exception) {
+    Log.e(chat.simplex.app.TAG, "Util.kt saveAnimImage error: ${e.message}")
+    null
+  }
+}
+
 fun saveFileFromUri(context: Context, uri: Uri): String? {
   return try {
     val inputStream = context.contentResolver.openInputStream(uri)
@@ -376,3 +403,32 @@ fun removeFile(context: Context, fileName: String): Boolean {
   }
   return fileDeleted
 }
+
+fun deleteAppFiles(context: Context) {
+  val dir = File(getAppFilesDirectory(context))
+  try {
+    dir.list()?.forEach {
+      removeFile(context, it)
+    }
+  } catch (e: java.lang.Exception) {
+    Log.e(TAG, "Util deleteAppFiles error: ${e.stackTraceToString()}")
+  }
+}
+
+fun directoryFileCountAndSize(dir: String): Pair<Int, Long> { // count, size in bytes
+  var fileCount = 0
+  var bytes = 0L
+  try {
+    File(dir).listFiles()?.forEach {
+      fileCount++
+      bytes += it.length()
+    }
+  } catch (e: java.lang.Exception) {
+    Log.e(TAG, "Util directoryFileCountAndSize error: ${e.stackTraceToString()}")
+  }
+  return fileCount to bytes
+}
+
+fun ByteArray.toBase64String() = Base64.encodeToString(this, Base64.DEFAULT)
+
+fun String.toByteArrayFromBase64() = Base64.decode(this, Base64.DEFAULT)

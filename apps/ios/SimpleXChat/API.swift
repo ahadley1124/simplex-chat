@@ -10,18 +10,47 @@ import Foundation
 
 private var chatController: chat_ctrl?
 
-public func getChatCtrl() -> chat_ctrl {
+private var migrationResult: (Bool, DBMigrationResult)?
+
+public func getChatCtrl(_ useKey: String? = nil) -> chat_ctrl {
     if let controller = chatController { return controller }
+    fatalError("chat controller not initialized")
+}
+
+public func chatMigrateInit(_ useKey: String? = nil) -> (Bool, DBMigrationResult) {
+    if let res = migrationResult { return res }
     let dbPath = getAppDatabasePath().path
-    logger.debug("getChatCtrl DB path: \(dbPath)")
-    var cstr = dbPath.cString(using: .utf8)!
-    chatController = chat_init(&cstr)
-    logger.debug("getChatCtrl: chat_init")
-    return chatController!
+    var dbKey = ""
+    let useKeychain = storeDBPassphraseGroupDefault.get()
+    logger.debug("chatMigrateInit uses keychain: \(useKeychain)")
+    if let key = useKey {
+        dbKey = key
+    } else if useKeychain {
+        if !hasDatabase() {
+            logger.debug("chatMigrateInit generating a random DB key")
+            dbKey = randomDatabasePassword()
+            initialRandomDBPassphraseGroupDefault.set(true)
+        } else if let key = getDatabaseKey() {
+            dbKey = key
+        }
+    }
+    logger.debug("chatMigrateInit DB path: \(dbPath)")
+//    logger.debug("chatMigrateInit DB key: \(dbKey)")
+    var cPath = dbPath.cString(using: .utf8)!
+    var cKey = dbKey.cString(using: .utf8)!
+    // the last parameter of chat_migrate_init is used to return the pointer to chat controller
+    let cjson = chat_migrate_init(&cPath, &cKey, &chatController)!
+    let dbRes = dbMigrationResult(fromCString(cjson))
+    let encrypted = dbKey != ""
+    let keychainErr = dbRes == .ok && useKeychain && encrypted && !setDatabaseKey(dbKey)
+    let result = (encrypted, keychainErr ? .errorKeychain : dbRes)
+    migrationResult = result
+    return result
 }
 
 public func resetChatCtrl() {
     chatController = nil
+    migrationResult = nil
 }
 
 public func sendSimpleXCmd(_ cmd: ChatCommand) -> ChatResponse {
@@ -101,5 +130,26 @@ public func responseError(_ err: Error) -> String {
         return String(describing: r)
     } else {
         return err.localizedDescription
+    }
+}
+
+public enum DBMigrationResult: Decodable, Equatable {
+    case ok
+    case errorNotADatabase(dbFile: String)
+    case error(dbFile: String, migrationError: String)
+    case errorKeychain
+    case unknown(json: String)
+}
+
+func dbMigrationResult(_ s: String) -> DBMigrationResult {
+    let d = s.data(using: .utf8)!
+// TODO is there a way to do it without copying the data? e.g:
+//    let p = UnsafeMutableRawPointer.init(mutating: UnsafeRawPointer(cjson))
+//    let d = Data.init(bytesNoCopy: p, count: strlen(cjson), deallocator: .free)
+    do {
+        return try jsonDecoder.decode(DBMigrationResult.self, from: d)
+    } catch let error {
+        logger.error("chatResponse jsonDecoder.decode error: \(error.localizedDescription)")
+        return .unknown(json: s)
     }
 }

@@ -130,7 +130,7 @@ fun GroupMenuItems(chat: Chat, groupInfo: GroupInfo, chatModel: ChatModel, showM
     GroupMemberStatus.MemInvited -> {
       JoinGroupAction(chat, groupInfo, chatModel, showMenu)
       if (groupInfo.canDelete) {
-        DeleteGroupAction(chat, chatModel, showMenu)
+        DeleteGroupAction(chat, groupInfo, chatModel, showMenu)
       }
     }
     else -> {
@@ -143,7 +143,7 @@ fun GroupMenuItems(chat: Chat, groupInfo: GroupInfo, chatModel: ChatModel, showM
         LeaveGroupAction(groupInfo, chatModel, showMenu)
       }
       if (groupInfo.canDelete) {
-        DeleteGroupAction(chat, chatModel, showMenu)
+        DeleteGroupAction(chat, groupInfo, chatModel, showMenu)
       }
     }
   }
@@ -168,7 +168,7 @@ fun ToggleNotificationsChatAction(chat: Chat, chatModel: ChatModel, ntfsEnabled:
     if (ntfsEnabled) stringResource(R.string.mute_chat) else stringResource(R.string.unmute_chat),
     if (ntfsEnabled) Icons.Outlined.NotificationsOff else Icons.Outlined.Notifications,
     onClick = {
-      changeNtfsState(!ntfsEnabled, chat, chatModel)
+      changeNtfsStatePerChat(!ntfsEnabled, mutableStateOf(ntfsEnabled), chat, chatModel)
       showMenu.value = false
     }
   )
@@ -177,7 +177,7 @@ fun ToggleNotificationsChatAction(chat: Chat, chatModel: ChatModel, ntfsEnabled:
 @Composable
 fun ClearChatAction(chat: Chat, chatModel: ChatModel, showMenu: MutableState<Boolean>) {
   ItemAction(
-    stringResource(R.string.clear_verb),
+    stringResource(R.string.clear_chat_menu_action),
     Icons.Outlined.Restore,
     onClick = {
       clearChatDialog(chat.chatInfo, chatModel)
@@ -190,7 +190,7 @@ fun ClearChatAction(chat: Chat, chatModel: ChatModel, showMenu: MutableState<Boo
 @Composable
 fun DeleteContactAction(chat: Chat, chatModel: ChatModel, showMenu: MutableState<Boolean>) {
   ItemAction(
-    stringResource(R.string.delete_verb),
+    stringResource(R.string.delete_contact_menu_action),
     Icons.Outlined.Delete,
     onClick = {
       deleteContactDialog(chat.chatInfo, chatModel)
@@ -201,12 +201,12 @@ fun DeleteContactAction(chat: Chat, chatModel: ChatModel, showMenu: MutableState
 }
 
 @Composable
-fun DeleteGroupAction(chat: Chat, chatModel: ChatModel, showMenu: MutableState<Boolean>) {
+fun DeleteGroupAction(chat: Chat, groupInfo: GroupInfo, chatModel: ChatModel, showMenu: MutableState<Boolean>) {
   ItemAction(
-    stringResource(R.string.delete_verb),
+    stringResource(R.string.delete_group_menu_action),
     Icons.Outlined.Delete,
     onClick = {
-      deleteGroupDialog(chat.chatInfo, chatModel)
+      deleteGroupDialog(chat.chatInfo, groupInfo, chatModel)
       showMenu.value = false
     },
     color = Color.Red
@@ -424,6 +424,36 @@ fun groupInvitationAcceptedAlert() {
   )
 }
 
+fun changeNtfsStatePerChat(enabled: Boolean, currentState: MutableState<Boolean>, chat: Chat, chatModel: ChatModel) {
+  val newChatInfo = when(chat.chatInfo) {
+    is ChatInfo.Direct -> with (chat.chatInfo) {
+      ChatInfo.Direct(contact.copy(chatSettings = contact.chatSettings.copy(enableNtfs = enabled)))
+    }
+    is ChatInfo.Group -> with(chat.chatInfo) {
+      ChatInfo.Group(groupInfo.copy(chatSettings = groupInfo.chatSettings.copy(enableNtfs = enabled)))
+    }
+    else -> null
+  }
+  withApi {
+    val res = when (newChatInfo) {
+      is ChatInfo.Direct -> with(newChatInfo) {
+        chatModel.controller.apiSetSettings(chatType, apiId, contact.chatSettings)
+      }
+      is ChatInfo.Group -> with(newChatInfo) {
+        chatModel.controller.apiSetSettings(chatType, apiId, groupInfo.chatSettings)
+      }
+      else -> false
+    }
+    if (res && newChatInfo != null) {
+      chatModel.updateChatInfo(newChatInfo)
+      if (!enabled) {
+        chatModel.controller.ntfManager.cancelNotificationsForChat(chat.id)
+      }
+      currentState.value = enabled
+    }
+  }
+}
+
 @Composable
 fun ChatListNavLinkLayout(
   chatLinkPreview: @Composable () -> Unit,
@@ -432,7 +462,7 @@ fun ChatListNavLinkLayout(
   showMenu: MutableState<Boolean>,
   stopped: Boolean
 ) {
-  var modifier = Modifier.fillMaxWidth().height(88.dp)
+  var modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp)
   if (!stopped) modifier = modifier.combinedClickable(onClick = click, onLongClick = { showMenu.value = true })
   Surface(modifier) {
     Row(

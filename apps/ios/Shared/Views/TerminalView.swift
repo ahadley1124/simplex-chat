@@ -15,10 +15,32 @@ private let maxItemSize: Int = 50000
 
 struct TerminalView: View {
     @EnvironmentObject var chatModel: ChatModel
+    @AppStorage(DEFAULT_PERFORM_LA) private var prefPerformLA = false
+    @AppStorage(DEFAULT_DEVELOPER_TOOLS) private var developerTools = false
     @State var composeState: ComposeState = ComposeState()
     @FocusState private var keyboardVisible: Bool
+    @State var authorized = !UserDefaults.standard.bool(forKey: DEFAULT_PERFORM_LA)
 
     var body: some View {
+        if authorized {
+            terminalView()
+        } else {
+            Button(action: runAuth) { Label("Unlock", systemImage: "lock") }
+            .onAppear(perform: runAuth)
+        }
+    }
+
+    private func runAuth() {
+        authenticate(reason: NSLocalizedString("Open chat console", comment: "authentication reason")) { laResult in
+            switch laResult {
+            case .success: authorized = true
+            case .unavailable: authorized = true
+            case .failed: authorized = false
+            }
+        }
+    }
+
+    private func terminalView() -> some View {
         VStack {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -83,11 +105,19 @@ struct TerminalView: View {
     
     func sendMessage() {
         let cmd = ChatCommand.string(composeState.message)
-        DispatchQueue.global().async {
-            Task {
-                composeState.inProgress = true
-                _ = await chatSendCmd(cmd)
-                composeState.inProgress = false
+        if composeState.message.starts(with: "/sql") && (!prefPerformLA || !developerTools) {
+            let resp = ChatResponse.chatCmdError(chatError: ChatError.error(errorType: ChatErrorType.commandError(message: "Failed reading: empty")))
+            DispatchQueue.main.async {
+                ChatModel.shared.terminalItems.append(.cmd(.now, cmd))
+                ChatModel.shared.terminalItems.append(.resp(.now, resp))
+            }
+        } else {
+            DispatchQueue.global().async {
+                Task {
+                    composeState.inProgress = true
+                    _ = await chatSendCmd(cmd)
+                    composeState.inProgress = false
+                }
             }
         }
         composeState = ComposeState()

@@ -6,7 +6,6 @@ import android.app.ActivityManager.RunningAppProcessInfo
 import android.app.Application
 import android.content.*
 import android.net.Uri
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -25,7 +24,10 @@ import chat.simplex.app.R
 import chat.simplex.app.ui.theme.*
 import chat.simplex.app.views.call.*
 import chat.simplex.app.views.helpers.*
+import chat.simplex.app.views.newchat.ConnectViaLinkTab
 import chat.simplex.app.views.onboarding.OnboardingStage
+import chat.simplex.app.views.usersettings.NotificationPreviewMode
+import chat.simplex.app.views.usersettings.NotificationsMode
 import kotlinx.coroutines.*
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
@@ -61,7 +63,12 @@ enum class CallOnLockScreen {
 class AppPreferences(val context: Context) {
   private val sharedPreferences: SharedPreferences = context.getSharedPreferences(SHARED_PREFS_ID, Context.MODE_PRIVATE)
 
-  val runServiceInBackground = mkBoolPreference(SHARED_PREFS_RUN_SERVICE_IN_BACKGROUND, true)
+  // deprecated, remove in 2024
+  private val runServiceInBackground = mkBoolPreference(SHARED_PREFS_RUN_SERVICE_IN_BACKGROUND, true)
+  val notificationsMode = mkStrPreference(SHARED_PREFS_NOTIFICATIONS_MODE,
+    if (!runServiceInBackground.get()) NotificationsMode.OFF.name else NotificationsMode.default.name
+  )
+  val notificationPreviewMode = mkStrPreference(SHARED_PREFS_NOTIFICATION_PREVIEW_MODE, NotificationPreviewMode.default.name)
   val backgroundServiceNoticeShown = mkBoolPreference(SHARED_PREFS_SERVICE_NOTICE_SHOWN, false)
   val backgroundServiceBatteryNoticeShown = mkBoolPreference(SHARED_PREFS_SERVICE_BATTERY_NOTICE_SHOWN, false)
   val autoRestartWorkerVersion = mkIntPreference(SHARED_PREFS_AUTO_RESTART_WORKER_VERSION, 0)
@@ -80,6 +87,7 @@ class AppPreferences(val context: Context) {
   )
   val performLA = mkBoolPreference(SHARED_PREFS_PERFORM_LA, false)
   val laNoticeShown = mkBoolPreference(SHARED_PREFS_LA_NOTICE_SHOWN, false)
+  val webrtcIceServers = mkStrPreference(SHARED_PREFS_WEBRTC_ICE_SERVERS, null)
   val privacyAcceptImages = mkBoolPreference(SHARED_PREFS_PRIVACY_ACCEPT_IMAGES, true)
   val privacyLinkPreviews = mkBoolPreference(SHARED_PREFS_PRIVACY_LINK_PREVIEWS, true)
   val experimentalCalls = mkBoolPreference(SHARED_PREFS_EXPERIMENTAL_CALLS, false)
@@ -98,6 +106,13 @@ class AppPreferences(val context: Context) {
   val networkTCPKeepIntvl = mkIntPreference(SHARED_PREFS_NETWORK_TCP_KEEP_INTVL, KeepAliveOpts.defaults.keepIntvl)
   val networkTCPKeepCnt = mkIntPreference(SHARED_PREFS_NETWORK_TCP_KEEP_CNT, KeepAliveOpts.defaults.keepCnt)
   val incognito = mkBoolPreference(SHARED_PREFS_INCOGNITO, false)
+  val connectViaLinkTab = mkStrPreference(SHARED_PREFS_CONNECT_VIA_LINK_TAB, ConnectViaLinkTab.SCAN.name)
+
+  val storeDBPassphrase = mkBoolPreference(SHARED_PREFS_STORE_DB_PASSPHRASE, true)
+  val initialRandomDBPassphrase = mkBoolPreference(SHARED_PREFS_INITIAL_RANDOM_DB_PASSPHRASE, false)
+  val encryptedDBPassphrase = mkStrPreference(SHARED_PREFS_ENCRYPTED_DB_PASSPHRASE, null)
+  val initializationVectorDBPassphrase = mkStrPreference(SHARED_PREFS_INITIALIZATION_VECTOR_DB_PASSPHRASE, null)
+  val encryptionStartedAt = mkDatePreference(SHARED_PREFS_ENCRYPTION_STARTED_AT, null, true)
 
   val currentTheme = mkStrPreference(SHARED_PREFS_CURRENT_THEME, DefaultTheme.SYSTEM.name)
   val primaryColor = mkIntPreference(SHARED_PREFS_PRIMARY_COLOR, LightColorPalette.primary.toArgb())
@@ -134,25 +149,34 @@ class AppPreferences(val context: Context) {
       set = fun(value) = sharedPreferences.edit().putString(prefName, value).apply()
     )
 
-  private fun mkDatePreference(prefName: String, default: Instant?): Preference<Instant?> =
+  /**
+  * Provide `[commit] = true` to save preferences right now, not after some unknown period of time.
+  * So in case of a crash this value will be saved 100%
+  * */
+  private fun mkDatePreference(prefName: String, default: Instant?, commit: Boolean = false): Preference<Instant?> =
     Preference(
       get = {
         val pref = sharedPreferences.getString(prefName, default?.toEpochMilliseconds()?.toString())
         pref?.let { Instant.fromEpochMilliseconds(pref.toLong()) }
       },
-      set = fun(value) = sharedPreferences.edit().putString(prefName, value?.toEpochMilliseconds()?.toString()).apply()
+      set = fun(value) = sharedPreferences.edit().putString(prefName, value?.toEpochMilliseconds()?.toString()).let {
+        if (commit) it.commit() else it.apply()
+      }
     )
 
   companion object {
     private const val SHARED_PREFS_ID = "chat.simplex.app.SIMPLEX_APP_PREFS"
     private const val SHARED_PREFS_AUTO_RESTART_WORKER_VERSION = "AutoRestartWorkerVersion"
     private const val SHARED_PREFS_RUN_SERVICE_IN_BACKGROUND = "RunServiceInBackground"
+    private const val SHARED_PREFS_NOTIFICATIONS_MODE = "NotificationsMode"
+    private const val SHARED_PREFS_NOTIFICATION_PREVIEW_MODE = "NotificationPreviewMode"
     private const val SHARED_PREFS_SERVICE_NOTICE_SHOWN = "BackgroundServiceNoticeShown"
     private const val SHARED_PREFS_SERVICE_BATTERY_NOTICE_SHOWN = "BackgroundServiceBatteryNoticeShown"
     private const val SHARED_PREFS_WEBRTC_POLICY_RELAY = "WebrtcPolicyRelay"
     private const val SHARED_PREFS_WEBRTC_CALLS_ON_LOCK_SCREEN = "CallsOnLockScreen"
     private const val SHARED_PREFS_PERFORM_LA = "PerformLA"
     private const val SHARED_PREFS_LA_NOTICE_SHOWN = "LANoticeShown"
+    private const val SHARED_PREFS_WEBRTC_ICE_SERVERS = "WebrtcICEServers"
     private const val SHARED_PREFS_PRIVACY_ACCEPT_IMAGES = "PrivacyAcceptImages"
     private const val SHARED_PREFS_PRIVACY_LINK_PREVIEWS = "PrivacyLinkPreviews"
     private const val SHARED_PREFS_EXPERIMENTAL_CALLS = "ExperimentalCalls"
@@ -171,6 +195,12 @@ class AppPreferences(val context: Context) {
     private const val SHARED_PREFS_NETWORK_TCP_KEEP_INTVL = "NetworkTCPKeepIntvl"
     private const val SHARED_PREFS_NETWORK_TCP_KEEP_CNT = "NetworkTCPKeepCnt"
     private const val SHARED_PREFS_INCOGNITO = "Incognito"
+    private const val SHARED_PREFS_CONNECT_VIA_LINK_TAB = "ConnectViaLinkTab"
+    private const val SHARED_PREFS_STORE_DB_PASSPHRASE = "StoreDBPassphrase"
+    private const val SHARED_PREFS_INITIAL_RANDOM_DB_PASSPHRASE = "InitialRandomDBPassphrase"
+    private const val SHARED_PREFS_ENCRYPTED_DB_PASSPHRASE = "EncryptedDBPassphrase"
+    private const val SHARED_PREFS_INITIALIZATION_VECTOR_DB_PASSPHRASE = "InitializationVectorDBPassphrase"
+    private const val SHARED_PREFS_ENCRYPTION_STARTED_AT = "EncryptionStartedAt"
     private const val SHARED_PREFS_CURRENT_THEME = "CurrentTheme"
     private const val SHARED_PREFS_PRIMARY_COLOR = "PrimaryColor"
   }
@@ -178,12 +208,17 @@ class AppPreferences(val context: Context) {
 
 private const val MESSAGE_TIMEOUT: Int = 15_000_000
 
-open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager, val appContext: Context, val appPrefs: AppPreferences) {
+open class ChatController(var ctrl: ChatCtrl?, val ntfManager: NtfManager, val appContext: Context, val appPrefs: AppPreferences) {
   val chatModel = ChatModel(this)
   private var receiverStarted = false
+  var lastMsgReceivedTimestamp: Long = System.currentTimeMillis()
+    private set
 
   init {
-    chatModel.runServiceInBackground.value = appPrefs.runServiceInBackground.get()
+    chatModel.notificationsMode.value =
+      kotlin.runCatching { NotificationsMode.valueOf(appPrefs.notificationsMode.get()!!) }.getOrDefault(NotificationsMode.default)
+    chatModel.notificationPreviewMode.value =
+      kotlin.runCatching { NotificationPreviewMode.valueOf(appPrefs.notificationPreviewMode.get()!!) }.getOrDefault(NotificationPreviewMode.default)
     chatModel.performLA.value = appPrefs.performLA.get()
     chatModel.incognito.value = appPrefs.incognito.get()
   }
@@ -228,10 +263,12 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   }
 
   suspend fun sendCmd(cmd: CC): CR {
+    val ctrl = ctrl ?: throw Exception("Controller is not initialized")
+
     return withContext(Dispatchers.IO) {
       val c = cmd.cmdString
       if (cmd !is CC.ApiParseMarkdown) {
-        chatModel.terminalItems.add(TerminalItem.cmd(cmd))
+        chatModel.terminalItems.add(TerminalItem.cmd(cmd.obfuscated))
         Log.d(TAG, "sendCmd: ${cmd.cmdType}")
       }
       val json = chatSendCmd(ctrl, c)
@@ -247,7 +284,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
     }
   }
 
-  private suspend fun recvMsg(): CR? {
+  private suspend fun recvMsg(ctrl: ChatCtrl): CR? {
     return withContext(Dispatchers.IO) {
       val json = chatRecvMsgWait(ctrl, MESSAGE_TIMEOUT)
       if (json == "") {
@@ -262,7 +299,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   }
 
   private suspend fun recvMspLoop() {
-    val msg = recvMsg()
+    val msg = recvMsg(ctrl ?: return)
     if (msg != null) processReceivedMsg(msg)
     recvMspLoop()
   }
@@ -329,6 +366,13 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
     throw Error("failed to delete storage: ${r.responseType} ${r.details}")
   }
 
+  suspend fun apiStorageEncryption(currentKey: String = "", newKey: String = ""): CR.ChatCmdError? {
+    val r = sendCmd(CC.ApiStorageEncryption(DBEncryptionConfig(currentKey, newKey)))
+    if (r is CR.CmdOk) return null
+    else if (r is CR.ChatCmdError) return r
+    throw Exception("failed to set storage encryption: ${r.responseType} ${r.details}")
+  }
+
   private suspend fun apiGetChats(): List<Chat> {
     val r = sendCmd(CC.ApiGetChats())
     if (r is CR.ApiChats ) return r.chats
@@ -345,9 +389,15 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   suspend fun apiSendMessage(type: ChatType, id: Long, file: String? = null, quotedItemId: Long? = null, mc: MsgContent): AChatItem? {
     val cmd = CC.ApiSendMessage(type, id, file, quotedItemId, mc)
     val r = sendCmd(cmd)
-    if (r is CR.NewChatItem ) return r.chatItem
-    Log.e(TAG, "apiSendMessage bad response: ${r.responseType} ${r.details}")
-    return null
+    return when (r) {
+      is CR.NewChatItem -> r.chatItem
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiSendMessage", generalGetString(R.string.error_sending_message), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiUpdateChatItem(type: ChatType, id: Long, itemId: Long, mc: MsgContent): AChatItem? {
@@ -435,9 +485,15 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
 
   suspend fun apiAddContact(): String? {
     val r = sendCmd(CC.AddContact())
-    if (r is CR.Invitation) return r.connReqInvitation
-    Log.e(TAG, "apiAddContact bad response: ${r.responseType} ${r.details}")
-    return null
+    return when (r) {
+      is CR.Invitation -> r.connReqInvitation
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiAddContact", generalGetString(R.string.connection_error), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiConnect(connReq: String): Boolean  {
@@ -469,7 +525,9 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         return false
       }
       else -> {
-        apiErrorAlert("apiConnect", "Connection error", r)
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiConnect", generalGetString(R.string.connection_error), r)
+        }
         return false
       }
     }
@@ -486,7 +544,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         if (e is ChatError.ChatErrorChat && e.errorType is ChatErrorType.ContactGroups) {
           AlertManager.shared.showAlertMsg(
             generalGetString(R.string.cannot_delete_contact),
-            String.format(generalGetString(R.string.contact_cannot_be_deleted_as_they_are_in_groups), e.errorType.contact.displayName, e.errorType.groupNames)
+            String.format(generalGetString(R.string.contact_cannot_be_deleted_as_they_are_in_groups), e.errorType.contact.displayName, e.errorType.groupNames.joinToString(", "))
           )
         }
       }
@@ -541,9 +599,15 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
 
   suspend fun apiCreateUserAddress(): String? {
     val r = sendCmd(CC.CreateMyAddress())
-    if (r is CR.UserContactLinkCreated) return r.connReqContact
-    Log.e(TAG, "apiCreateUserAddress bad response: ${r.responseType} ${r.details}")
-    return null
+    return when (r) {
+      is CR.UserContactLinkCreated -> r.connReqContact
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiCreateUserAddress", generalGetString(R.string.error_creating_address), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiDeleteUserAddress(): Boolean {
@@ -566,9 +630,24 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
 
   suspend fun apiAcceptContactRequest(contactReqId: Long): Contact? {
     val r = sendCmd(CC.ApiAcceptContact(contactReqId))
-    if (r is CR.AcceptingContactRequest) return r.contact
-    Log.e(TAG, "apiAcceptContactRequest bad response: ${r.responseType} ${r.details}")
-    return null
+    return when {
+      r is CR.AcceptingContactRequest -> r.contact
+      r is CR.ChatCmdError && r.chatError is ChatError.ChatErrorAgent
+          && r.chatError.agentError is AgentErrorType.SMP
+          && r.chatError.agentError.smpErr is SMPErrorType.AUTH -> {
+        AlertManager.shared.showAlertMsg(
+          generalGetString(R.string.connection_error_auth),
+          generalGetString(R.string.sender_may_have_deleted_the_connection_request)
+        )
+        null
+      }
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiAcceptContactRequest", generalGetString(R.string.error_accepting_contact_request), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiRejectContactRequest(contactReqId: Long): Boolean {
@@ -626,9 +705,22 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
 
   suspend fun apiReceiveFile(fileId: Long): AChatItem? {
     val r = sendCmd(CC.ReceiveFile(fileId))
-    if (r is CR.RcvFileAccepted) return r.chatItem
-    Log.e(TAG, "apiReceiveFile bad response: ${r.responseType} ${r.details}")
-    return null
+    return when (r) {
+      is CR.RcvFileAccepted -> r.chatItem
+      is CR.RcvFileAcceptedSndCancelled -> {
+        AlertManager.shared.showAlertMsg(
+          generalGetString(R.string.cannot_receive_file),
+          generalGetString(R.string.sender_cancelled_file_transfer)
+        )
+        null
+      }
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiReceiveFile", generalGetString(R.string.error_receiving_file), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiNewGroup(p: GroupProfile): GroupInfo? {
@@ -640,9 +732,15 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
 
   suspend fun apiAddMember(groupId: Long, contactId: Long, memberRole: GroupMemberRole): GroupMember? {
     val r = sendCmd(CC.ApiAddMember(groupId, contactId, memberRole))
-    if (r is CR.SentGroupInvitation) return r.member
-    Log.e(TAG, "apiAddMember bad response: ${r.responseType} ${r.details}")
-    return null
+    return when (r) {
+      is CR.SentGroupInvitation -> r.member
+      else -> {
+        if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiAddMember", generalGetString(R.string.error_adding_members), r)
+        }
+        null
+      }
+    }
   }
 
   suspend fun apiJoinGroup(groupId: Long) {
@@ -659,11 +757,11 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         } else if (e is ChatError.ChatErrorStore && e.storeError is StoreError.GroupNotFound) {
           deleteGroup()
           AlertManager.shared.showAlertMsg(generalGetString(R.string.alert_title_no_group), generalGetString(R.string.alert_message_no_group))
-        } else {
-          AlertManager.shared.showAlertMsg(generalGetString(R.string.alert_title_join_group_error), "$e")
+        } else if (!(networkErrorAlert(r))) {
+          apiErrorAlert("apiJoinGroup", generalGetString(R.string.error_joining_group), r)
         }
       }
-      else -> Log.e(TAG, "apiJoinGroup bad response: ${r.responseType} ${r.details}")
+      else -> apiErrorAlert("apiJoinGroup", generalGetString(R.string.error_joining_group), r)
     }
   }
 
@@ -706,6 +804,30 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
     }
   }
 
+  private fun networkErrorAlert(r: CR): Boolean {
+    return when {
+      r is CR.ChatCmdError && r.chatError is ChatError.ChatErrorAgent
+          && r.chatError.agentError is AgentErrorType.BROKER
+          && r.chatError.agentError.brokerErr is BrokerErrorType.TIMEOUT -> {
+        AlertManager.shared.showAlertMsg(
+          generalGetString(R.string.connection_timeout),
+          generalGetString(R.string.network_error_desc)
+        )
+        true
+      }
+      r is CR.ChatCmdError && r.chatError is ChatError.ChatErrorAgent
+          && r.chatError.agentError is AgentErrorType.BROKER
+          && r.chatError.agentError.brokerErr is BrokerErrorType.NETWORK -> {
+        AlertManager.shared.showAlertMsg(
+          generalGetString(R.string.connection_error),
+          generalGetString(R.string.network_error_desc)
+        )
+        true
+      }
+      else -> false
+    }
+  }
+
   fun apiErrorAlert(method: String, title: String, r: CR) {
     val errMsg = "${r.responseType}: ${r.details}"
     Log.e(TAG, "$method bad response: $errMsg")
@@ -713,6 +835,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   }
 
   fun processReceivedMsg(r: CR) {
+    lastMsgReceivedTimestamp = System.currentTimeMillis()
     chatModel.terminalItems.add(TerminalItem.resp(r))
     when (r) {
       is CR.NewContactConnection -> {
@@ -725,7 +848,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         chatModel.updateContact(r.contact)
         chatModel.removeChat(r.contact.activeConn.id)
         chatModel.updateNetworkStatus(r.contact.id, Chat.NetworkStatus.Connected())
-//        NtfManager.shared.notifyContactConnected(contact)
+        ntfManager.notifyContactConnected(r.contact)
       }
       is CR.ContactConnecting -> {
         chatModel.updateContact(r.contact)
@@ -735,7 +858,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         val contactRequest = r.contactRequest
         val cInfo = ChatInfo.ContactRequest(contactRequest)
         chatModel.addChat(Chat(chatInfo = cInfo, chatItems = listOf()))
-//        NtfManager.shared.notifyContactRequest(contactRequest)
+        ntfManager.notifyContactRequestReceived(cInfo)
       }
       is CR.ContactUpdated -> {
         val cInfo = ChatInfo.Direct(r.toContact)
@@ -762,7 +885,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         val cItem = r.chatItem.chatItem
         chatModel.addChatItem(cInfo, cItem)
         val file = cItem.file
-        if (cItem.content.msgContent is MsgContent.MCImage && file != null && file.fileSize <= MAX_IMAGE_SIZE && appPrefs.privacyAcceptImages.get()) {
+        if (cItem.content.msgContent is MsgContent.MCImage && file != null && file.fileSize <= MAX_IMAGE_SIZE_AUTO_RCV && appPrefs.privacyAcceptImages.get()) {
           withApi { receiveFile(file.fileId) }
         }
         if (!cItem.chatDir.sent && !cItem.isCall && (!isAppOnForeground(appContext) || chatModel.chatId.value != cInfo.id)) {
@@ -841,7 +964,16 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         withCall(r, r.contact) { call ->
           chatModel.activeCall.value = call.copy(callState = CallState.OfferReceived, peerMedia = r.callType.media, sharedKey = r.sharedKey)
           val useRelay = chatModel.controller.appPrefs.webrtcPolicyRelay.get()
-          chatModel.callCommand.value = WCallCommand.Offer(offer = r.offer.rtcSession, iceCandidates = r.offer.rtcIceCandidates, media = r.callType.media, aesKey = r.sharedKey, relay = useRelay)
+          val iceServers = getIceServers()
+          Log.d(TAG, ".callOffer iceServers $iceServers")
+          chatModel.callCommand.value = WCallCommand.Offer(
+            offer = r.offer.rtcSession,
+            iceCandidates = r.offer.rtcIceCandidates,
+            media = r.callType.media,
+            aesKey = r.sharedKey,
+            iceServers = iceServers,
+            relay = useRelay
+          )
         }
       }
       is CR.CallAnswer -> {
@@ -927,56 +1059,66 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   }
 
   fun showBackgroundServiceNoticeIfNeeded() {
+    val mode = NotificationsMode.valueOf(appPrefs.notificationsMode.get()!!)
     Log.d(TAG, "showBackgroundServiceNoticeIfNeeded")
     if (!appPrefs.backgroundServiceNoticeShown.get()) {
       // the branch for the new users who have never seen service notice
-      if (isIgnoringBatteryOptimizations(appContext)) {
-        showBGServiceNotice()
+      if (!mode.requiresIgnoringBattery || isIgnoringBatteryOptimizations(appContext)) {
+        showBGServiceNotice(mode)
       } else {
-        showBGServiceNoticeIgnoreOptimization()
+        showBGServiceNoticeIgnoreOptimization(mode)
       }
       // set both flags, so that if the user doesn't allow ignoring optimizations, the service will be disabled without additional notice
       appPrefs.backgroundServiceNoticeShown.set(true)
       appPrefs.backgroundServiceBatteryNoticeShown.set(true)
-    } else if (!isIgnoringBatteryOptimizations(appContext) && appPrefs.runServiceInBackground.get()) {
+    } else if (mode.requiresIgnoringBattery && !isIgnoringBatteryOptimizations(appContext)) {
       // the branch for users who have app installed, and have seen the service notice,
       // but the battery optimization for the app is on (Android 12) AND the service is running
       if (appPrefs.backgroundServiceBatteryNoticeShown.get()) {
         // users have been presented with battery notice before - they did not allow ignoring optimizations -> disable service
-        showDisablingServiceNotice()
-        appPrefs.runServiceInBackground.set(false)
-        chatModel.runServiceInBackground.value = false
+        showDisablingServiceNotice(mode)
+        appPrefs.notificationsMode.set(NotificationsMode.OFF.name)
+        chatModel.notificationsMode.value = NotificationsMode.OFF
         SimplexService.StartReceiver.toggleReceiver(false)
+        MessagesFetcherWorker.cancelAll()
+        SimplexService.stop(SimplexApp.context)
       } else {
         // show battery optimization notice
-        showBGServiceNoticeIgnoreOptimization()
+        showBGServiceNoticeIgnoreOptimization(mode)
         appPrefs.backgroundServiceBatteryNoticeShown.set(true)
       }
     } else {
-      // service is allowed and battery optimization is disabled
+      // service or periodic mode was chosen and battery optimization is disabled
       SimplexApp.context.schedulePeriodicServiceRestartWorker()
+      SimplexApp.context.schedulePeriodicWakeUp()
     }
   }
 
-  private fun showBGServiceNotice() = AlertManager.shared.showAlert {
+  private fun showBGServiceNotice(mode: NotificationsMode) = AlertManager.shared.showAlert {
     AlertDialog(
       onDismissRequest = AlertManager.shared::hideAlert,
       title = {
         Row {
           Icon(
             Icons.Outlined.Bolt,
-            contentDescription = stringResource(R.string.icon_descr_instant_notifications),
+            contentDescription =
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.icon_descr_instant_notifications) else stringResource(R.string.periodic_notifications),
           )
-          Text(stringResource(R.string.private_instant_notifications), fontWeight = FontWeight.Bold)
+          Text(
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.icon_descr_instant_notifications) else stringResource(R.string.periodic_notifications),
+            fontWeight = FontWeight.Bold
+          )
         }
       },
       text = {
         Column {
           Text(
-            annotatedStringResource(R.string.to_preserve_privacy_simplex_has_background_service_instead_of_push_notifications_it_uses_a_few_pc_battery),
+            if (mode == NotificationsMode.SERVICE) annotatedStringResource(R.string.to_preserve_privacy_simplex_has_background_service_instead_of_push_notifications_it_uses_a_few_pc_battery) else annotatedStringResource(R.string.periodic_notifications_desc),
             Modifier.padding(bottom = 8.dp)
           )
-          Text(annotatedStringResource(R.string.it_can_disabled_via_settings_notifications_still_shown))
+          Text(
+            annotatedStringResource(R.string.it_can_disabled_via_settings_notifications_still_shown)
+          )
         }
       },
       confirmButton = {
@@ -985,7 +1127,7 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
     )
   }
 
-  private fun showBGServiceNoticeIgnoreOptimization() = AlertManager.shared.showAlert {
+  private fun showBGServiceNoticeIgnoreOptimization(mode: NotificationsMode) = AlertManager.shared.showAlert {
     val ignoreOptimization = {
       AlertManager.shared.hideAlert()
       askAboutIgnoringBatteryOptimization(appContext)
@@ -996,15 +1138,19 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
         Row {
           Icon(
             Icons.Outlined.Bolt,
-            contentDescription = stringResource(R.string.icon_descr_instant_notifications),
+            contentDescription =
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.icon_descr_instant_notifications) else stringResource(R.string.periodic_notifications),
           )
-          Text(stringResource(R.string.private_instant_notifications), fontWeight = FontWeight.Bold)
+          Text(
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.service_notifications) else stringResource(R.string.periodic_notifications),
+            fontWeight = FontWeight.Bold
+          )
         }
       },
       text = {
         Column {
           Text(
-            annotatedStringResource(R.string.to_preserve_privacy_simplex_has_background_service_instead_of_push_notifications_it_uses_a_few_pc_battery),
+            if (mode == NotificationsMode.SERVICE) annotatedStringResource(R.string.to_preserve_privacy_simplex_has_background_service_instead_of_push_notifications_it_uses_a_few_pc_battery) else annotatedStringResource(R.string.periodic_notifications_desc),
             Modifier.padding(bottom = 8.dp)
           )
           Text(annotatedStringResource(R.string.turn_off_battery_optimization))
@@ -1016,22 +1162,26 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
     )
   }
 
-  private fun showDisablingServiceNotice() = AlertManager.shared.showAlert {
+  private fun showDisablingServiceNotice(mode: NotificationsMode) = AlertManager.shared.showAlert {
     AlertDialog(
       onDismissRequest = AlertManager.shared::hideAlert,
       title = {
         Row {
           Icon(
             Icons.Outlined.Bolt,
-            contentDescription = stringResource(R.string.icon_descr_instant_notifications),
+            contentDescription =
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.icon_descr_instant_notifications) else stringResource(R.string.periodic_notifications),
           )
-          Text(stringResource(R.string.private_instant_notifications_disabled), fontWeight = FontWeight.Bold)
+          Text(
+            if (mode == NotificationsMode.SERVICE) stringResource(R.string.service_notifications_disabled) else stringResource(R.string.periodic_notifications_disabled),
+            fontWeight = FontWeight.Bold
+          )
         }
       },
       text = {
         Column {
           Text(
-            annotatedStringResource(R.string.turning_off_background_service),
+            annotatedStringResource(R.string.turning_off_service_and_periodic),
             Modifier.padding(bottom = 8.dp)
           )
         }
@@ -1086,14 +1236,11 @@ open class ChatController(private val ctrl: ChatCtrl, val ntfManager: NtfManager
   }
 
   fun isIgnoringBatteryOptimizations(context: Context): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
     val powerManager = context.getSystemService(Application.POWER_SERVICE) as PowerManager
     return powerManager.isIgnoringBatteryOptimizations(context.packageName)
   }
 
   private fun askAboutIgnoringBatteryOptimization(context: Context) {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
-
     Intent().apply {
       @SuppressLint("BatteryLife")
       action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
@@ -1164,6 +1311,7 @@ sealed class CC {
   class ApiExportArchive(val config: ArchiveConfig): CC()
   class ApiImportArchive(val config: ArchiveConfig): CC()
   class ApiDeleteStorage: CC()
+  class ApiStorageEncryption(val config: DBEncryptionConfig): CC()
   class ApiGetChats: CC()
   class ApiGetChat(val type: ChatType, val id: Long, val pagination: ChatPagination, val search: String = ""): CC()
   class ApiSendMessage(val type: ChatType, val id: Long, val file: String?, val quotedItemId: Long?, val mc: MsgContent): CC()
@@ -1218,6 +1366,7 @@ sealed class CC {
     is ApiExportArchive -> "/_db export ${json.encodeToString(config)}"
     is ApiImportArchive -> "/_db import ${json.encodeToString(config)}"
     is ApiDeleteStorage -> "/_db delete"
+    is ApiStorageEncryption -> "/_db encryption ${json.encodeToString(config)}"
     is ApiGetChats -> "/_get chats pcc=on"
     is ApiGetChat -> "/_get chat ${chatRef(type, id)} ${pagination.cmdString}" + (if (search == "") "" else " search=$search")
     is ApiSendMessage -> "/_send ${chatRef(type, id)} json ${json.encodeToString(ComposedMessage(file, quotedItemId, mc))}"
@@ -1272,6 +1421,7 @@ sealed class CC {
     is ApiExportArchive -> "apiExportArchive"
     is ApiImportArchive -> "apiImportArchive"
     is ApiDeleteStorage -> "apiDeleteStorage"
+    is ApiStorageEncryption -> "apiStorageEncryption"
     is ApiGetChats -> "apiGetChats"
     is ApiGetChat -> "apiGetChat"
     is ApiSendMessage -> "apiSendMessage"
@@ -1317,6 +1467,14 @@ sealed class CC {
 
   class ItemRange(val from: Long, val to: Long)
 
+  val obfuscated: CC
+    get() = when (this) {
+      is ApiStorageEncryption -> ApiStorageEncryption(DBEncryptionConfig(obfuscate(config.currentKey), obfuscate(config.newKey)))
+      else -> this
+    }
+
+  private fun obfuscate(s: String): String = if (s.isEmpty()) "" else "***"
+
   companion object {
     fun chatRef(chatType: ChatType, id: Long) = "${chatType.type}${id}"
 
@@ -1347,6 +1505,9 @@ class ComposedMessage(val filePath: String?, val quotedItemId: Long?, val msgCon
 
 @Serializable
 class ArchiveConfig(val archivePath: String, val disableCompression: Boolean? = null, val parentTempDirectory: String? = null)
+
+@Serializable
+class DBEncryptionConfig(val currentKey: String, val newKey: String)
 
 @Serializable
 data class NetCfg(
@@ -1522,6 +1683,7 @@ sealed class CR {
   @Serializable @SerialName("groupUpdated") class GroupUpdated(val toGroup: GroupInfo): CR()
   // receiving file events
   @Serializable @SerialName("rcvFileAccepted") class RcvFileAccepted(val chatItem: AChatItem): CR()
+  @Serializable @SerialName("rcvFileAcceptedSndCancelled") class RcvFileAcceptedSndCancelled(val rcvFileTransfer: RcvFileTransfer): CR()
   @Serializable @SerialName("rcvFileStart") class RcvFileStart(val chatItem: AChatItem): CR()
   @Serializable @SerialName("rcvFileComplete") class RcvFileComplete(val chatItem: AChatItem): CR()
   // sending file events
@@ -1606,6 +1768,7 @@ sealed class CR {
     is ConnectedToGroupMember -> "connectedToGroupMember"
     is GroupRemoved -> "groupRemoved"
     is GroupUpdated -> "groupUpdated"
+    is RcvFileAcceptedSndCancelled -> "rcvFileAcceptedSndCancelled"
     is RcvFileAccepted -> "rcvFileAccepted"
     is RcvFileStart -> "rcvFileStart"
     is RcvFileComplete -> "rcvFileComplete"
@@ -1691,6 +1854,7 @@ sealed class CR {
     is ConnectedToGroupMember -> "groupInfo: $groupInfo\nmember: $member"
     is GroupRemoved -> json.encodeToString(groupInfo)
     is GroupUpdated -> json.encodeToString(toGroup)
+    is RcvFileAcceptedSndCancelled -> noDetails()
     is RcvFileAccepted -> json.encodeToString(chatItem)
     is RcvFileStart -> json.encodeToString(chatItem)
     is RcvFileComplete -> json.encodeToString(chatItem)
@@ -1752,22 +1916,26 @@ sealed class ChatError {
     is ChatErrorChat -> "chat ${errorType.string}"
     is ChatErrorAgent -> "agent ${agentError.string}"
     is ChatErrorStore -> "store ${storeError.string}"
+    is ChatErrorDatabase -> "database ${databaseError.string}"
   }
   @Serializable @SerialName("error") class ChatErrorChat(val errorType: ChatErrorType): ChatError()
   @Serializable @SerialName("errorAgent") class ChatErrorAgent(val agentError: AgentErrorType): ChatError()
   @Serializable @SerialName("errorStore") class ChatErrorStore(val storeError: StoreError): ChatError()
+  @Serializable @SerialName("errorDatabase") class ChatErrorDatabase(val databaseError: DatabaseError): ChatError()
 }
 
 @Serializable
 sealed class ChatErrorType {
   val string: String get() = when (this) {
+    is NoActiveUser -> "noActiveUser"
     is InvalidConnReq -> "invalidConnReq"
     is ContactGroups -> "groupNames $groupNames"
-    is NoActiveUser -> "noActiveUser"
+    is СommandError -> "commandError $message"
   }
   @Serializable @SerialName("noActiveUser") class NoActiveUser: ChatErrorType()
   @Serializable @SerialName("invalidConnReq") class InvalidConnReq: ChatErrorType()
   @Serializable @SerialName("contactGroups") class ContactGroups(val contact: Contact, val groupNames: List<String>): ChatErrorType()
+  @Serializable @SerialName("commandError") class СommandError(val message: String): ChatErrorType()
 }
 
 @Serializable
@@ -1778,6 +1946,28 @@ sealed class StoreError {
   }
   @Serializable @SerialName("userContactLinkNotFound") class UserContactLinkNotFound: StoreError()
   @Serializable @SerialName("groupNotFound") class GroupNotFound: StoreError()
+}
+
+@Serializable
+sealed class DatabaseError {
+  val string: String get() = when (this) {
+    is ErrorEncrypted -> "errorEncrypted"
+    is ErrorPlaintext -> "errorPlaintext"
+    is ErrorNoFile -> "errorPlaintext"
+    is ErrorExport -> "errorNoFile"
+    is ErrorOpen -> "errorExport"
+  }
+  @Serializable @SerialName("errorEncrypted") object ErrorEncrypted: DatabaseError()
+  @Serializable @SerialName("errorPlaintext") object ErrorPlaintext: DatabaseError()
+  @Serializable @SerialName("errorNoFile") class ErrorNoFile(val dbFile: String): DatabaseError()
+  @Serializable @SerialName("errorExport") class ErrorExport(val sqliteError: SQLiteError): DatabaseError()
+  @Serializable @SerialName("errorOpen") class ErrorOpen(val sqliteError: SQLiteError): DatabaseError()
+}
+
+@Serializable
+sealed class SQLiteError {
+  @Serializable @SerialName("errorNotADatabase") object ErrorNotADatabase: SQLiteError()
+  @Serializable @SerialName("error") class Error(val error: String): SQLiteError()
 }
 
 @Serializable

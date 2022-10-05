@@ -94,7 +94,9 @@ chatTests = do
     it "accept contact request incognito" testAcceptContactRequestIncognito
     it "join group incognito" testJoinGroupIncognito
     it "can't invite contact to whom user connected incognito to a group" testCantInviteContactIncognito
+  describe "contact aliases" $ do
     it "set contact alias" testSetAlias
+    it "set connection alias" testSetConnectionAlias
   describe "SMP servers" $
     it "get and set SMP servers" testGetSetSMPServers
   describe "async connection handshake" $ do
@@ -115,6 +117,10 @@ chatTests = do
   describe "maintenance mode" $ do
     it "start/stop/export/import chat" testMaintenanceMode
     it "export/import chat with files" testMaintenanceModeWithFiles
+    it "encrypt/decrypt database" testDatabaseEncryption
+  describe "mute/unmute messages" $ do
+    it "mute/unmute contact" testMuteContact
+    it "mute/unmute group" testMuteGroup
 
 versionTestMatrix2 :: (TestCC -> TestCC -> IO ()) -> Spec
 versionTestMatrix2 runTest = do
@@ -2368,7 +2374,28 @@ testSetAlias = testChat2 aliceProfile bobProfile $
   \alice bob -> do
     connectUsers alice bob
     alice #$> ("/_set alias @2 my friend bob", id, "contact bob alias updated: my friend bob")
+    alice ##> "/cs"
+    alice <## "bob (Bob) (alias: my friend bob)"
     alice #$> ("/_set alias @2", id, "contact bob alias removed")
+    alice ##> "/cs"
+    alice <## "bob (Bob)"
+
+testSetConnectionAlias :: IO ()
+testSetConnectionAlias = testChat2 aliceProfile bobProfile $
+  \alice bob -> do
+    alice ##> "/c"
+    inv <- getInvitation alice
+    alice @@@ [(":1","")]
+    alice ##> "/_set alias :1 friend"
+    alice <## "connection 1 alias updated: friend"
+    bob ##> ("/c " <> inv)
+    bob <## "confirmation sent!"
+    concurrently_
+      (alice <## ("bob (Bob): contact is connected"))
+      (bob <## ("alice (Alice): contact is connected"))
+    alice @@@ [("@bob","")]
+    alice ##> "/cs"
+    alice <## "bob (Bob) (alias: friend)"
 
 testGetSetSMPServers :: IO ()
 testGetSetSMPServers =
@@ -2388,8 +2415,8 @@ testAsyncInitiatingOffline = withTmpFiles $ do
     alice ##> "/c"
     getInvitation alice
   withNewTestChat "bob" bobProfile $ \bob -> do
-    bob ##> ("/c " <> inv)
-    bob <## "confirmation sent!"
+    bob `send` ("/c " <> inv)
+    bob <### ["/c " <> inv, "confirmation sent!"]
     withTestChat "alice" $ \alice -> do
       concurrently_
         (bob <## "alice (Alice): contact is connected")
@@ -2415,8 +2442,8 @@ testFullAsync = withTmpFiles $ do
     alice ##> "/c"
     getInvitation alice
   withNewTestChat "bob" bobProfile $ \bob -> do
-    bob ##> ("/c " <> inv)
-    bob <## "confirmation sent!"
+    bob `send` ("/c " <> inv)
+    bob <### ["/c " <> inv, "confirmation sent!"]
   withTestChat "alice" $ \_ -> pure () -- connecting... notification in UI
   withTestChat "bob" $ \_ -> pure () -- connecting... notification in UI
   withTestChat "alice" $ \alice -> do
@@ -2714,7 +2741,7 @@ testMaintenanceMode = withTmpFiles $ do
       alice <## "ok"
       -- cannot start chat after import
       alice ##> "/_start"
-      alice <## "error: chat store changed"
+      alice <## "error: chat store changed, please restart chat"
     -- works after full restart
     withTestChat "alice" $ \alice -> testChatWorking alice bob
 
@@ -2749,13 +2776,103 @@ testMaintenanceModeWithFiles = withTmpFiles $ do
       alice <## "ok"
       -- cannot start chat after delete
       alice ##> "/_start"
-      alice <## "error: chat store changed"
+      alice <## "error: chat store changed, please restart chat"
       doesDirectoryExist "./tests/tmp/alice_files" `shouldReturn` False
       alice ##> "/_db import {\"archivePath\": \"./tests/tmp/alice-chat.zip\"}"
       alice <## "ok"
       B.readFile "./tests/tmp/alice_files/test.jpg" `shouldReturn` src
     -- works after full restart
     withTestChat "alice" $ \alice -> testChatWorking alice bob
+
+testDatabaseEncryption :: IO ()
+testDatabaseEncryption = withTmpFiles $ do
+  withNewTestChat "bob" bobProfile $ \bob -> do
+    withNewTestChatOpts testOpts {maintenance = True} "alice" aliceProfile $ \alice -> do
+      alice ##> "/_start"
+      alice <## "chat started"
+      connectUsers alice bob
+      alice #> "@bob hi"
+      bob <# "alice> hi"
+      alice ##> "/db encrypt mykey"
+      alice <## "error: chat not stopped"
+      alice ##> "/db decrypt mykey"
+      alice <## "error: chat not stopped"
+      alice ##> "/_stop"
+      alice <## "chat stopped"
+      alice ##> "/db decrypt mykey"
+      alice <## "error: chat database is not encrypted"
+      alice ##> "/db encrypt mykey"
+      alice <## "ok"
+      alice ##> "/_start"
+      alice <## "error: chat store changed, please restart chat"
+    withTestChatOpts testOpts {maintenance = True, dbKey = "mykey"} "alice" $ \alice -> do
+      alice ##> "/_start"
+      alice <## "chat started"
+      testChatWorking alice bob
+      alice ##> "/_stop"
+      alice <## "chat stopped"
+      alice ##> "/db key wrongkey nextkey"
+      alice <## "error encrypting database: wrong passphrase or invalid database file"
+      alice ##> "/db key mykey nextkey"
+      alice <## "ok"
+      alice ##> "/_db encryption {\"currentKey\":\"nextkey\",\"newKey\":\"anotherkey\"}"
+      alice <## "ok"
+    withTestChatOpts testOpts {maintenance = True, dbKey = "anotherkey"} "alice" $ \alice -> do
+      alice ##> "/_start"
+      alice <## "chat started"
+      testChatWorking alice bob
+      alice ##> "/_stop"
+      alice <## "chat stopped"
+      alice ##> "/db decrypt anotherkey"
+      alice <## "ok"
+    withTestChat "alice" $ \alice -> testChatWorking alice bob
+
+testMuteContact :: IO ()
+testMuteContact =
+  testChat2 aliceProfile bobProfile $
+    \alice bob -> do
+      connectUsers alice bob
+      alice #> "@bob hello"
+      bob <# "alice> hello"
+      bob ##> "/mute alice"
+      bob <## "ok"
+      alice #> "@bob hi"
+      (bob </)
+      bob ##> "/cs"
+      bob <## "alice (Alice) (muted, you can /unmute @alice)"
+      bob ##> "/unmute alice"
+      bob <## "ok"
+      bob ##> "/cs"
+      bob <## "alice (Alice)"
+      alice #> "@bob hi again"
+      bob <# "alice> hi again"
+
+testMuteGroup :: IO ()
+testMuteGroup =
+  testChat3 aliceProfile bobProfile cathProfile $
+    \alice bob cath -> do
+      createGroup3 "team" alice bob cath
+      threadDelay 1000000
+      alice #> "#team hello!"
+      concurrently_
+        (bob <# "#team alice> hello!")
+        (cath <# "#team alice> hello!")
+      bob ##> "/mute #team"
+      bob <## "ok"
+      alice #> "#team hi"
+      concurrently_
+        (bob </)
+        (cath <# "#team alice> hi")
+      bob ##> "/gs"
+      bob <## "#team (muted, you can /unmute #team)"
+      bob ##> "/unmute #team"
+      bob <## "ok"
+      alice #> "#team hi again"
+      concurrently_
+        (bob <# "#team alice> hi again")
+        (cath <# "#team alice> hi again")
+      bob ##> "/gs"
+      bob <## "#team"
 
 withTestChatContactConnected :: String -> (TestCC -> IO a) -> IO a
 withTestChatContactConnected dbPrefix action =
