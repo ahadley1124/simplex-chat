@@ -1,7 +1,6 @@
 package chat.simplex.app.views
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -26,32 +25,29 @@ import chat.simplex.app.R
 import chat.simplex.app.SimplexService
 import chat.simplex.app.model.ChatModel
 import chat.simplex.app.model.Profile
-import chat.simplex.app.ui.theme.HighOrLowlight
-import chat.simplex.app.ui.theme.SimpleButton
+import chat.simplex.app.ui.theme.*
+import chat.simplex.app.views.helpers.AppBarTitle
 import chat.simplex.app.views.helpers.withApi
 import chat.simplex.app.views.onboarding.OnboardingStage
 import chat.simplex.app.views.onboarding.ReadableText
 import com.google.accompanist.insets.navigationBarsWithImePadding
+import kotlinx.coroutines.delay
 
 fun isValidDisplayName(name: String) : Boolean {
   return (name.firstOrNull { it.isWhitespace() }) == null
 }
 
 @Composable
-fun CreateProfilePanel(chatModel: ChatModel) {
+fun CreateProfilePanel(chatModel: ChatModel, close: () -> Unit) {
   val displayName = remember { mutableStateOf("") }
   val fullName = remember { mutableStateOf("") }
   val focusRequester = remember { FocusRequester() }
 
   Surface(Modifier.background(MaterialTheme.colors.onBackground)) {
     Column(
-      modifier = Modifier.fillMaxSize()
+      modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
     ) {
-      Text(
-        stringResource(R.string.create_profile),
-        style = MaterialTheme.typography.h4,
-        modifier = Modifier.padding(vertical = 5.dp)
-      )
+      AppBarTitle(stringResource(R.string.create_profile), false)
       ReadableText(R.string.your_profile_is_stored_on_your_device)
       ReadableText(R.string.profile_is_only_shared_with_your_contacts)
       Spacer(Modifier.height(10.dp))
@@ -76,10 +72,12 @@ fun CreateProfilePanel(chatModel: ChatModel) {
       ProfileNameField(fullName)
       Spacer(Modifier.fillMaxHeight().weight(1f))
       Row {
-        SimpleButton(
-          text = stringResource(R.string.about_simplex),
-          icon = Icons.Outlined.ArrowBackIosNew
-        ) { chatModel.onboardingStage.value = OnboardingStage.Step1_SimpleXInfo }
+        if (chatModel.users.isEmpty()) {
+          SimpleButton(
+            text = stringResource(R.string.about_simplex),
+            icon = Icons.Outlined.ArrowBackIosNew
+          ) { chatModel.onboardingStage.value = OnboardingStage.Step1_SimpleXInfo }
+        }
 
         Spacer(Modifier.fillMaxWidth().weight(1f))
 
@@ -87,7 +85,7 @@ fun CreateProfilePanel(chatModel: ChatModel) {
         val createModifier: Modifier
         val createColor: Color
         if (enabled) {
-          createModifier = Modifier.clickable { createProfile(chatModel, displayName.value, fullName.value) }.padding(8.dp)
+          createModifier = Modifier.clickable { createProfile(chatModel, displayName.value, fullName.value, close) }.padding(8.dp)
           createColor = MaterialTheme.colors.primary
         } else {
           createModifier = Modifier.padding(8.dp)
@@ -102,21 +100,29 @@ fun CreateProfilePanel(chatModel: ChatModel) {
       }
 
       LaunchedEffect(Unit) {
+        delay(300)
         focusRequester.requestFocus()
       }
     }
   }
 }
 
-fun createProfile(chatModel: ChatModel, displayName: String, fullName: String) {
+fun createProfile(chatModel: ChatModel, displayName: String, fullName: String, close: () -> Unit) {
   withApi {
     val user = chatModel.controller.apiCreateActiveUser(
       Profile(displayName, fullName, null)
-    )
-    chatModel.controller.startChat(user)
-    chatModel.controller.showBackgroundServiceNoticeIfNeeded()
-    SimplexService.start(chatModel.controller.appContext)
-    chatModel.onboardingStage.value = OnboardingStage.OnboardingComplete
+    ) ?: return@withApi
+    chatModel.currentUser.value = user
+    if (chatModel.users.isEmpty()) {
+      chatModel.controller.startChat(user)
+      chatModel.onboardingStage.value = OnboardingStage.Step3_SetNotificationsMode
+    } else {
+      val users = chatModel.controller.listUsers()
+      chatModel.users.clear()
+      chatModel.users.addAll(users)
+      chatModel.controller.getUserChatData()
+      close()
+    }
   }
 }
 

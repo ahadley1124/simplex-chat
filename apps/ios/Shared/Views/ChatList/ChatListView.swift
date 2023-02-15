@@ -11,26 +11,40 @@ import SimpleXChat
 
 struct ChatListView: View {
     @EnvironmentObject var chatModel: ChatModel
-    // not really used in this view
     @State private var showSettings = false
     @State private var searchText = ""
-    @State private var selectedChat: ChatId?
     @State private var showAddChat = false
+    @State var userPickerVisible = false
 
     var body: some View {
-        NavigationView {
-            VStack {
-                if chatModel.chats.isEmpty {
-                    onboardingButtons()
-                }
-                if chatModel.chats.count > 8 {
-                    chatList.searchable(text: $searchText)
-                } else {
-                    chatList
+        ZStack(alignment: .topLeading) {
+            NavStackCompat(
+                isActive: Binding(
+                    get: { ChatModel.shared.chatId != nil },
+                    set: { _ in }
+                ),
+                destination: chatView
+            ) {
+                VStack {
+                    if chatModel.chats.isEmpty {
+                        onboardingButtons()
+                    }
+                    if chatModel.chats.count > 8 {
+                        chatList.searchable(text: $searchText)
+                    } else {
+                        chatList
+                    }
                 }
             }
+            if userPickerVisible {
+                Rectangle().fill(.white.opacity(0.001)).onTapGesture {
+                    withAnimation {
+                        userPickerVisible.toggle()
+                    }
+                }
+            }
+            UserPicker(showSettings: $showSettings, userPickerVisible: $userPickerVisible)
         }
-        .navigationViewStyle(.stack)
     }
 
     var chatList: some View {
@@ -42,7 +56,6 @@ struct ChatListView: View {
             }
         }
         .onChange(of: chatModel.chatId) { _ in
-            selectedChat = chatModel.chatId
             if chatModel.chatId == nil, let chatId = chatModel.chatToTop {
                 chatModel.chatToTop = nil
                 chatModel.popChat(chatId)
@@ -50,13 +63,35 @@ struct ChatListView: View {
         }
         .onChange(of: chatModel.appOpenUrl) { _ in connectViaUrl() }
         .onAppear() { connectViaUrl() }
+        .onDisappear() { withAnimation { userPickerVisible = false } }
         .offset(x: -8)
         .listStyle(.plain)
         .navigationTitle("Your chats")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                SettingsButton()
+                Button {
+                    if chatModel.users.count > 1 {
+                        withAnimation {
+                            userPickerVisible.toggle()
+                        }
+                    } else {
+                        showSettings = true
+                    }
+                } label: {
+                    let user = chatModel.currentUser ?? User.sampleData
+                    ZStack(alignment: .topTrailing) {
+                        ProfileImage(imageStr: user.image, color: Color(uiColor: .quaternaryLabel))
+                            .frame(width: 32, height: 32)
+                            .padding(.trailing, 4)
+                        let allRead = chatModel.users
+                            .filter { !$0.user.activeUser }
+                            .allSatisfy { u in u.unreadCount == 0 }
+                        if !allRead {
+                            unreadBadge(size: 12)
+                        }
+                    }
+                }
             }
             ToolbarItem(placement: .principal) {
                 if (chatModel.incognito) {
@@ -67,6 +102,8 @@ struct ChatListView: View {
                         }
                         Image(systemName: "theatermasks").frame(maxWidth: 24, maxHeight: 24, alignment: .center).foregroundColor(.indigo)
                     }
+                } else {
+                    Text("Your chats").font(.headline)
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -77,15 +114,15 @@ struct ChatListView: View {
                 }
             }
         }
-        .background(
-            NavigationLink(
-                destination: chatView(selectedChat),
-                isActive: Binding(
-                    get: { selectedChat != nil },
-                    set: { _, _ in selectedChat = nil }
-                )
-            ) { EmptyView() }
-        )
+        .sheet(isPresented: $showSettings) {
+            SettingsView(showSettings: $showSettings)
+        }
+    }
+
+    private func unreadBadge(_ text: Text? = Text(" "), size: CGFloat = 18) -> some View {
+        Circle()
+            .frame(width: size, height: size)
+            .foregroundColor(.accentColor)
     }
 
     private func onboardingButtons() -> some View {
@@ -131,8 +168,8 @@ struct ChatListView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
-    @ViewBuilder private func chatView(_ chatId: ChatId?) -> some View {
-        if let chatId = chatId, let chat = chatModel.getChat(chatId) {
+    @ViewBuilder private func chatView() -> some View {
+        if let chatId = chatModel.chatId, let chat = chatModel.getChat(chatId) {
             ChatView(chat: chat).onAppear {
                 loadChat(chat: chat)
             }

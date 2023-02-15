@@ -1,6 +1,7 @@
 package chat.simplex.app.views.usersettings
 
 import SectionCustomFooter
+import SectionDivider
 import SectionItemViewSpaceBetween
 import SectionSpacer
 import SectionView
@@ -29,7 +30,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.toBitmap
 import chat.simplex.app.*
 import chat.simplex.app.R
-import chat.simplex.app.model.ChatModel
 import chat.simplex.app.ui.theme.*
 import chat.simplex.app.views.helpers.*
 import com.godaddy.android.colorpicker.*
@@ -40,9 +40,7 @@ enum class AppIcon(val resId: Int) {
 }
 
 @Composable
-fun AppearanceView(
-  showCustomModal: (@Composable (ChatModel, () -> Unit) -> Unit) -> (() -> Unit),
-) {
+fun AppearanceView() {
   val appIcon = remember { mutableStateOf(findEnabledIcon()) }
 
   fun setAppIcon(newIcon: AppIcon) {
@@ -65,19 +63,10 @@ fun AppearanceView(
   AppearanceLayout(
     appIcon,
     changeIcon = ::setAppIcon,
-    showThemeSelector = showCustomModal { _, close ->
-      ModalView(
-        close = close, modifier = Modifier,
-        background = if (isInDarkTheme()) colors.background else SettingsBackgroundLight
-      ) { ThemeSelectorView() }
-    },
     editPrimaryColor = { primary ->
-      showCustomModal { _, close ->
-        ModalView(
-          close = close, modifier = Modifier,
-          background = if (isInDarkTheme()) colors.background else SettingsBackgroundLight
-        ) { ColorEditor(primary, close) }
-      }()
+      ModalManager.shared.showModalCloseable { close ->
+        ColorEditor(primary, close)
+      }
     },
   )
 }
@@ -85,19 +74,14 @@ fun AppearanceView(
 @Composable fun AppearanceLayout(
   icon: MutableState<AppIcon>,
   changeIcon: (AppIcon) -> Unit,
-  showThemeSelector: () -> Unit,
   editPrimaryColor: (Color) -> Unit,
 ) {
   Column(
     Modifier.fillMaxWidth(),
     horizontalAlignment = Alignment.Start,
   ) {
-    Text(
-      stringResource(R.string.appearance_settings),
-      Modifier.padding(start = 16.dp, bottom = 24.dp),
-      style = MaterialTheme.typography.h1
-    )
-    SectionView(stringResource(R.string.settings_section_title_icon)) {
+    AppBarTitle(stringResource(R.string.appearance_settings))
+    SectionView(stringResource(R.string.settings_section_title_icon), padding = PaddingValues(horizontal = DEFAULT_PADDING_HALF)) {
       LazyRow {
         items(AppIcon.values().size, { index -> AppIcon.values()[index] }) { index ->
           val item = AppIcon.values()[index]
@@ -123,19 +107,18 @@ fun AppearanceView(
     SectionSpacer()
     val currentTheme by CurrentColors.collectAsState()
     SectionView(stringResource(R.string.settings_section_title_themes)) {
-      Column(
-        Modifier.padding(horizontal = 8.dp)
-      ) {
-        SectionItemViewSpaceBetween(showThemeSelector, padding = PaddingValues()) {
-          Text(generalGetString(R.string.theme))
+      SectionItemViewSpaceBetween {
+        val darkTheme = isSystemInDarkTheme()
+        val state = remember { derivedStateOf { currentTheme.second } }
+        ThemeSelector(state) {
+          ThemeManager.applyTheme(it.name, darkTheme)
         }
-        Spacer(Modifier.padding(horizontal = 4.dp))
-
-        SectionItemViewSpaceBetween({ editPrimaryColor(currentTheme.first.primary) }, padding = PaddingValues()) {
-          val title = generalGetString(R.string.color_primary)
-          Text(title)
-          Icon(Icons.Filled.Circle, title, tint = colors.primary)
-        }
+      }
+      SectionDivider()
+      SectionItemViewSpaceBetween({ editPrimaryColor(currentTheme.first.primary) }) {
+        val title = generalGetString(R.string.color_primary)
+        Text(title)
+        Icon(Icons.Filled.Circle, title, tint = colors.primary)
       }
     }
     if (currentTheme.first.primary != LightColorPalette.primary) {
@@ -161,6 +144,7 @@ fun ColorEditor(
     Modifier
       .fillMaxWidth()
   ) {
+    AppBarTitle(stringResource(R.string.color_primary))
     var currentColor by remember { mutableStateOf(initialColor) }
     ColorPicker(initialColor) {
       currentColor = it
@@ -195,6 +179,21 @@ fun ColorPicker(initialColor: Color, onColorChanged: (Color) -> Unit) {
   )
 }
 
+@Composable
+private fun ThemeSelector(state: State<DefaultTheme>, onSelected: (DefaultTheme) -> Unit) {
+  val darkTheme = isSystemInDarkTheme()
+  val values by remember { mutableStateOf(ThemeManager.allThemes(darkTheme).map { it.second to it.third }) }
+  ExposedDropDownSettingRow(
+    generalGetString(R.string.theme),
+    values,
+    state,
+    icon = null,
+    enabled = remember { mutableStateOf(true) },
+    onSelected = onSelected
+  )
+}
+
+
 private fun findEnabledIcon(): AppIcon = AppIcon.values().first { icon ->
   SimplexApp.context.packageManager.getComponentEnabledSetting(
     ComponentName(BuildConfig.APPLICATION_ID, "chat.simplex.app.MainActivity_${icon.name.lowercase()}")
@@ -208,7 +207,6 @@ fun PreviewAppearanceSettings() {
     AppearanceLayout(
       icon = remember { mutableStateOf(AppIcon.DARK_BLUE) },
       changeIcon = {},
-      showThemeSelector = {},
       editPrimaryColor = {},
     )
   }

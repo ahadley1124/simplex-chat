@@ -50,7 +50,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
                             try await apiVerifyToken(token: token, nonce: nonce, code: verification)
                             m.tokenStatus = .active
                         } catch {
-                            if let cr = error as? ChatResponse, case .chatCmdError(.errorAgent(.NTF(.AUTH))) = cr {
+                            if let cr = error as? ChatResponse, case .chatCmdError(_, .errorAgent(.NTF(.AUTH))) = cr {
                                 m.tokenStatus = .expired
                             }
                             logger.error("AppDelegate: didReceiveRemoteNotification: apiVerifyToken or apiIntervalNofication error: \(responseError(error))")
@@ -77,6 +77,10 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
     func applicationWillTerminate(_ application: UIApplication) {
         logger.debug("AppDelegate: applicationWillTerminate")
+        ChatModel.shared.filesToDelete.forEach {
+            removeFile($0)
+        }
+        ChatModel.shared.filesToDelete = []
         terminateChat()
     }
 
@@ -102,9 +106,11 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
 class SceneDelegate: NSObject, ObservableObject, UIWindowSceneDelegate {
     var window: UIWindow?
+    var windowScene: UIWindowScene?
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        self.windowScene = windowScene
         window = windowScene.keyWindow
         window?.tintColor = UIColor(cgColor: getUIAccentColorDefault())
         window?.overrideUserInterfaceStyle = getUserInterfaceStyleDefault()

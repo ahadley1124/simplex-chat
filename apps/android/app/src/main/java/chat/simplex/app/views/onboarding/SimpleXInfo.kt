@@ -2,7 +2,7 @@ package chat.simplex.app.views.onboarding
 
 import android.content.res.Configuration
 import androidx.annotation.StringRes
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,34 +41,36 @@ fun SimpleXInfoLayout(
   onboardingStage: MutableState<OnboardingStage?>?,
   showModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
 ) {
-  Column(Modifier.fillMaxHeight(), horizontalAlignment = Alignment.Start) {
-    SimpleXLogo()
+  Column(
+    Modifier
+      .fillMaxSize()
+      .verticalScroll(rememberScrollState())
+      .padding(horizontal = DEFAULT_PADDING),
+  ) {
+    Box(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 8.dp), contentAlignment = Alignment.Center) {
+      SimpleXLogo()
+    }
 
-    Text(stringResource(R.string.next_generation_of_private_messaging), style = MaterialTheme.typography.h2, modifier = Modifier.padding(bottom = 16.dp))
+    Text(stringResource(R.string.next_generation_of_private_messaging), style = MaterialTheme.typography.h2, modifier = Modifier.padding(bottom = 24.dp), textAlign = TextAlign.Center)
 
     InfoRow(painterResource(R.drawable.privacy), R.string.privacy_redefined, R.string.first_platform_without_user_ids)
     InfoRow(painterResource(R.drawable.shield), R.string.immune_to_spam_and_abuse, R.string.people_can_connect_only_via_links_you_share)
     InfoRow(painterResource(R.drawable.decentralized), R.string.decentralized, R.string.opensource_protocol_and_code_anybody_can_run_servers)
 
-    Spacer(
-      Modifier
-        .fillMaxHeight()
-        .weight(1f))
+    Spacer(Modifier.fillMaxHeight().weight(1f))
 
     if (onboardingStage != null) {
       Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         OnboardingActionButton(user, onboardingStage)
       }
-      Spacer(
-        Modifier
-          .fillMaxHeight()
-          .weight(1f))
+      Spacer(Modifier.fillMaxHeight().weight(1f))
     }
 
     Box(
       Modifier
         .fillMaxWidth()
-        .padding(bottom = 16.dp), contentAlignment = Alignment.Center) {
+        .padding(bottom = 16.dp), contentAlignment = Alignment.Center
+    ) {
       SimpleButton(text = stringResource(R.string.how_it_works), icon = Icons.Outlined.Info,
         click = showModal { HowItWorks(user, onboardingStage) })
     }
@@ -80,7 +83,7 @@ fun SimpleXLogo() {
     painter = painterResource(if (isInDarkTheme()) R.drawable.logo_light else R.drawable.logo),
     contentDescription = stringResource(R.string.image_descr_simplex_logo),
     modifier = Modifier
-      .padding(vertical = 20.dp)
+      .padding(vertical = DEFAULT_PADDING)
       .fillMaxWidth(0.80f)
   )
 }
@@ -98,18 +101,17 @@ private fun InfoRow(icon: Painter, @StringRes titleId: Int, @StringRes textId: I
   }
 }
 
-
 @Composable
 fun OnboardingActionButton(user: User?, onboardingStage: MutableState<OnboardingStage?>, onclick: (() -> Unit)? = null) {
   if (user == null) {
-    ActionButton(R.string.create_your_profile, onboarding = OnboardingStage.Step2_CreateProfile, onboardingStage, onclick)
+    OnboardingActionButton(R.string.create_your_profile, onboarding = OnboardingStage.Step2_CreateProfile, onboardingStage, onclick)
   } else {
-    ActionButton(R.string.make_private_connection, onboarding = OnboardingStage.OnboardingComplete, onboardingStage, onclick)
+    OnboardingActionButton(R.string.make_private_connection, onboarding = OnboardingStage.OnboardingComplete, onboardingStage, onclick)
   }
 }
 
 @Composable
-private fun ActionButton(
+fun OnboardingActionButton(
   @StringRes labelId: Int,
   onboarding: OnboardingStage?,
   onboardingStage: MutableState<OnboardingStage?>,
@@ -139,7 +141,7 @@ fun PreviewSimpleXInfo() {
     SimpleXInfoLayout(
       user = null,
       onboardingStage = null,
-      showModal = {{}}
+      showModal = { {} }
     )
   }
 }

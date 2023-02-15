@@ -1,17 +1,27 @@
-module Simplex.Chat.Util where
+{-# LANGUAGE NumericUnderscores #-}
 
-import Data.ByteString.Char8 (ByteString)
-import Data.Text (Text)
-import Data.Text.Encoding (decodeUtf8With)
+module Simplex.Chat.Util
+  ( diffInMicros,
+    diffInSeconds,
+    week,
+  )
+where
 
-safeDecodeUtf8 :: ByteString -> Text
-safeDecodeUtf8 = decodeUtf8With onError
-  where
-    onError _ _ = Just '?'
+import Data.Fixed (Fixed (MkFixed), Pico)
+import Data.Time (NominalDiffTime, nominalDiffTimeToSeconds)
+import Data.Time.Clock (UTCTime, diffUTCTime)
 
-uncurry3 :: (a -> b -> c -> d) -> ((a, b, c) -> d)
-uncurry3 f ~(a, b, c) = f a b c
+diffInSeconds :: UTCTime -> UTCTime -> Int
+diffInSeconds a b = (`div` 1000000_000000) $ diffInPicos a b
 
-lastMaybe :: [a] -> Maybe a
-lastMaybe [] = Nothing
-lastMaybe xs = Just $ last xs
+diffInMicros :: UTCTime -> UTCTime -> Int
+diffInMicros a b = (`div` 1000000) $ diffInPicos a b
+
+diffInPicos :: UTCTime -> UTCTime -> Int
+diffInPicos a b = fromInteger . fromPico . nominalDiffTimeToSeconds $ diffUTCTime a b
+
+fromPico :: Pico -> Integer
+fromPico (MkFixed i) = i
+
+week :: NominalDiffTime
+week = 7 * 86400

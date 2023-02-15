@@ -4,16 +4,20 @@ import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.InlineTextContent
+import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cancel
-import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
@@ -21,11 +25,22 @@ import androidx.compose.ui.unit.*
 import chat.simplex.app.R
 import chat.simplex.app.model.*
 import chat.simplex.app.ui.theme.*
+import chat.simplex.app.views.chat.ComposePreview
+import chat.simplex.app.views.chat.ComposeState
 import chat.simplex.app.views.chat.item.MarkdownText
 import chat.simplex.app.views.helpers.*
 
 @Composable
-fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileDisplayName: String?, stopped: Boolean) {
+fun ChatPreviewView(
+  chat: Chat,
+  chatModelDraft: ComposeState?,
+  chatModelDraftChatId: ChatId?,
+  chatModelIncognito: Boolean,
+  currentUserProfileDisplayName: String?,
+  contactNetworkStatus: NetworkStatus?,
+  stopped: Boolean,
+  linkMode: SimplexLinkMode
+) {
   val cInfo = chat.chatInfo
 
   @Composable
@@ -63,10 +78,57 @@ fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileD
   }
 
   @Composable
+  fun VerifiedIcon() {
+    Icon(Icons.Outlined.VerifiedUser, null, Modifier.size(19.dp).padding(end = 3.dp, top = 1.dp), tint = HighOrLowlight)
+  }
+
+  fun messageDraft(draft: ComposeState): Pair<AnnotatedString, Map<String, InlineTextContent>> {
+    fun attachment(): Pair<ImageVector, String?>? =
+      when (draft.preview) {
+        is ComposePreview.FilePreview -> Icons.Filled.InsertDriveFile to draft.preview.fileName
+        is ComposePreview.ImagePreview -> Icons.Outlined.Image to null
+        is ComposePreview.VoicePreview -> Icons.Filled.PlayArrow to durationText(draft.preview.durationMs / 1000)
+        else -> null
+      }
+
+    val attachment = attachment()
+    val text = buildAnnotatedString {
+      appendInlineContent(id = "editIcon")
+      append(" ")
+      if (attachment != null) {
+        appendInlineContent(id = "attachmentIcon")
+        if (attachment.second != null) {
+          append(attachment.second as String)
+        }
+        append(" ")
+      }
+      append(draft.message)
+    }
+    val inlineContent: Map<String, InlineTextContent> = mapOf(
+      "editIcon" to InlineTextContent(
+        Placeholder(20.sp, 20.sp, PlaceholderVerticalAlign.TextCenter)
+      ) {
+        Icon(Icons.Outlined.EditNote, null, tint = MaterialTheme.colors.primary)
+      },
+      "attachmentIcon" to InlineTextContent(
+        Placeholder(20.sp, 20.sp, PlaceholderVerticalAlign.TextCenter)
+      ) {
+        Icon(attachment?.first ?: Icons.Outlined.EditNote, null, tint = HighOrLowlight)
+      }
+    )
+    return text to inlineContent
+  }
+
+  @Composable
   fun chatPreviewTitle() {
     when (cInfo) {
       is ChatInfo.Direct ->
-        chatPreviewTitleText(if (cInfo.ready) Color.Unspecified else HighOrLowlight)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (cInfo.contact.verified) {
+            VerifiedIcon()
+          }
+          chatPreviewTitleText(if (cInfo.ready) Color.Unspecified else HighOrLowlight)
+        }
       is ChatInfo.Group ->
         when (cInfo.groupInfo.membership.memberStatus) {
           GroupMemberStatus.MemInvited -> chatPreviewTitleText(if (chat.chatInfo.incognito) Indigo else MaterialTheme.colors.primary)
@@ -81,14 +143,30 @@ fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileD
   fun chatPreviewText(chatModelIncognito: Boolean) {
     val ci = chat.chatItems.lastOrNull()
     if (ci != null) {
+      val (text: CharSequence, inlineTextContent) = when {
+        chatModelDraftChatId == chat.id && chatModelDraft != null -> remember(chatModelDraft) { messageDraft(chatModelDraft) }
+        !ci.meta.itemDeleted -> ci.text to null
+        else -> generalGetString(R.string.marked_deleted_description) to null
+      }
+      val formattedText = when {
+        chatModelDraftChatId == chat.id && chatModelDraft != null -> null
+        !ci.meta.itemDeleted -> ci.formattedText
+        else -> null
+      }
       MarkdownText(
-        ci.text,
-        ci.formattedText,
-        sender = null,
-        metaText = null,
+        text,
+        formattedText,
+        sender = when {
+          chatModelDraftChatId == chat.id && chatModelDraft != null -> null
+          cInfo is ChatInfo.Group && !ci.chatDir.sent -> ci.memberDisplayName
+          else -> null
+        },
+        linkMode = linkMode,
+        senderBold = true,
         maxLines = 2,
         overflow = TextOverflow.Ellipsis,
         style = MaterialTheme.typography.body1.copy(color = if (isInDarkTheme()) MessagePreviewDark else MessagePreviewLight, lineHeight = 22.sp),
+        inlineContent = inlineTextContent,
         modifier = Modifier.fillMaxWidth(),
       )
     } else {
@@ -121,7 +199,10 @@ fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileD
         .weight(1F)
     ) {
       chatPreviewTitle()
-      chatPreviewText(chatModelIncognito)
+      val height = with(LocalDensity.current) { 46.sp.toDp() }
+      Row(Modifier.heightIn(min = height)) {
+        chatPreviewText(chatModelIncognito)
+      }
     }
     val ts = chat.chatItems.lastOrNull()?.timestampText ?: getTimestampText(chat.chatInfo.updatedAt)
 
@@ -136,13 +217,13 @@ fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileD
       )
       val n = chat.chatStats.unreadCount
       val showNtfsIcon = !chat.chatInfo.ntfsEnabled && (chat.chatInfo is ChatInfo.Direct || chat.chatInfo is ChatInfo.Group)
-      if (n > 0) {
+      if (n > 0 || chat.chatStats.unreadChat) {
         Box(
           Modifier.padding(top = 24.dp),
           contentAlignment = Alignment.Center
         ) {
           Text(
-            unreadCountStr(n),
+            if (n > 0) unreadCountStr(n) else "",
             color = MaterialTheme.colors.onPrimary,
             fontSize = 11.sp,
             modifier = Modifier
@@ -173,7 +254,7 @@ fun ChatPreviewView(chat: Chat, chatModelIncognito: Boolean, currentUserProfileD
           Modifier.padding(top = 52.dp),
           contentAlignment = Alignment.Center
         ) {
-          ChatStatusImage(chat)
+          ChatStatusImage(contactNetworkStatus)
         }
       }
     }
@@ -196,10 +277,9 @@ fun unreadCountStr(n: Int): String {
 }
 
 @Composable
-fun ChatStatusImage(chat: Chat) {
-  val s = chat.serverInfo.networkStatus
-  val descr = s.statusString
-  if (s is Chat.NetworkStatus.Error) {
+fun ChatStatusImage(s: NetworkStatus?) {
+  val descr = s?.statusString
+  if (s is NetworkStatus.Error) {
     Icon(
       Icons.Outlined.ErrorOutline,
       contentDescription = descr,
@@ -207,7 +287,7 @@ fun ChatStatusImage(chat: Chat) {
       modifier = Modifier
         .size(19.dp)
     )
-  } else if (s !is Chat.NetworkStatus.Connected) {
+  } else if (s !is NetworkStatus.Connected) {
     CircularProgressIndicator(
       Modifier
         .padding(horizontal = 2.dp)
@@ -227,6 +307,6 @@ fun ChatStatusImage(chat: Chat) {
 @Composable
 fun PreviewChatPreviewView() {
   SimpleXTheme {
-    ChatPreviewView(Chat.sampleData, false, "", stopped = false)
+    ChatPreviewView(Chat.sampleData, null, null, false, "", contactNetworkStatus = NetworkStatus.Connected(), stopped = false, linkMode = SimplexLinkMode.DESCRIPTION)
   }
 }

@@ -20,7 +20,7 @@ struct SimpleXApp: App {
     @AppStorage(DEFAULT_PERFORM_LA) private var prefPerformLA = false
     @State private var userAuthorized: Bool?
     @State private var doAuthenticate = false
-    @State private var enteredBackground: Double? = nil
+    @State private var enteredBackground: TimeInterval? = nil
 
     init() {
         hs_init(0, nil)
@@ -60,7 +60,7 @@ struct SimpleXApp: App {
                             enteredBackground = ProcessInfo.processInfo.systemUptime
                         }
                         doAuthenticate = false
-                        NtfManager.shared.setNtfBadgeCount(chatModel.totalUnreadCount())
+                        NtfManager.shared.setNtfBadgeCount(chatModel.totalUnreadCountForAllUsers())
                     case .active:
                         if chatModel.chatRunning == true {
                             ChatReceiver.shared.start()

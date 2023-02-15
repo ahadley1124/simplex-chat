@@ -16,6 +16,7 @@ final class ChatModel: ObservableObject {
     @Published var onboardingStage: OnboardingStage?
     @Published var v3DBMigration: V3DBMigrationState = v3DBMigrationDefault.get()
     @Published var currentUser: User?
+    @Published var users: [UserInfo] = []
     @Published var chatInitialized = false
     @Published var chatRunning: Bool?
     @Published var chatDbChanged = false
@@ -23,6 +24,8 @@ final class ChatModel: ObservableObject {
     @Published var chatDbStatus: DBMigrationResult?
     // list of chat "previews"
     @Published var chats: [Chat] = []
+    // map of connections network statuses, key is agent connection id
+    @Published var networkStatuses: Dictionary<String, NetworkStatus> = [:]
     // current chat
     @Published var chatId: String?
     @Published var reversedChatItems: [ChatItem] = []
@@ -30,8 +33,10 @@ final class ChatModel: ObservableObject {
     @Published var groupMembers: [GroupMember] = []
     // items in the terminal view
     @Published var terminalItems: [TerminalItem] = []
-    @Published var userAddress: String?
-    @Published var userSMPServers: [String]?
+    @Published var userAddress: UserContactLink?
+    @Published var userSMPServers: [ServerCfg]?
+    @Published var presetSMPServers: [String]?
+    @Published var chatItemTTL: ChatItemTTL = .none
     @Published var appOpenUrl: URL?
     @Published var deviceToken: DeviceToken?
     @Published var savedToken: DeviceToken?
@@ -48,9 +53,17 @@ final class ChatModel: ObservableObject {
     @Published var activeCall: Call?
     @Published var callCommand: WCallCommand?
     @Published var showCallView = false
+    // currently showing QR code
+    @Published var connReqInv: String?
+    // audio recording and playback
+    @Published var stopPreviousRecPlay: Bool = false // value is not taken into account, only the fact it switches
+    @Published var draft: ComposeState?
+    @Published var draftChatId: String?
     var callWebView: WKWebView?
 
     var messageDelivery: Dictionary<Int64, () -> Void> = [:]
+
+    var filesToDelete: [String] = []
 
     static let shared = ChatModel()
 
@@ -95,7 +108,7 @@ final class ChatModel: ObservableObject {
     }
 
     func updateContact(_ contact: Contact) {
-        updateChat(.direct(contact: contact), addMissing: !contact.isIndirectContact)
+        updateChat(.direct(contact: contact), addMissing: contact.directOrUsed)
     }
 
     func updateGroup(_ groupInfo: GroupInfo) {
@@ -110,17 +123,20 @@ final class ChatModel: ObservableObject {
         }
     }
 
-    func updateNetworkStatus(_ id: ChatId, _ status: Chat.NetworkStatus) {
+    private func _updateChat(_ id: ChatId, _ update: @escaping (Chat) -> Void) {
         if let i = getChatIndex(id) {
-            chats[i].serverInfo.networkStatus = status
+            // we need to separately update the chat object, as it is ObservedObject,
+            // and chat in the list so the list view is updated...
+            // simply updating chats[i] replaces the object without updating the current object in the list
+            let chat = chats[i]
+            update(chat)
+            chats[i] = chat
         }
     }
 
     func replaceChat(_ id: String, _ chat: Chat) {
         if let i = getChatIndex(id) {
-            let serverInfo = chats[i].serverInfo
             chats[i] = chat
-            chats[i].serverInfo = serverInfo
         } else {
             // invalid state, correcting
             chats.insert(chat, at: 0)
@@ -146,7 +162,7 @@ final class ChatModel: ObservableObject {
                 addChat(Chat(c), at: i)
             }
         }
-        NtfManager.shared.setNtfBadgeCount(totalUnreadCount())
+        NtfManager.shared.setNtfBadgeCount(totalUnreadCountForAllUsers())
     }
 
 //    func addGroup(_ group: SimpleXChat.Group) {
@@ -159,7 +175,7 @@ final class ChatModel: ObservableObject {
             chats[i].chatItems = [cItem]
             if case .rcvNew = cItem.meta.itemStatus {
                 chats[i].chatStats.unreadCount = chats[i].chatStats.unreadCount + 1
-                NtfManager.shared.incNtfBadgeCount()
+                increaseUnreadCounter(user: currentUser!)
             }
             if i > 0 {
                 if chatId == nil {
@@ -175,7 +191,7 @@ final class ChatModel: ObservableObject {
         }
         // add to current chat
         if chatId == cInfo.id {
-            withAnimation { reversedChatItems.insert(cItem, at: 0) }
+            _ = _upsertChatItem(cInfo, cItem)
         }
     }
 
@@ -183,7 +199,11 @@ final class ChatModel: ObservableObject {
         // update previews
         var res: Bool
         if let chat = getChat(cInfo.id) {
-            if let pItem = chat.chatItems.last, pItem.id == cItem.id {
+            if let pItem = chat.chatItems.last {
+                if pItem.id == cItem.id || (chatId == cInfo.id && reversedChatItems.first(where: { $0.id == cItem.id }) == nil) {
+                    chat.chatItems = [cItem]
+                }
+            } else {
                 chat.chatItems = [cItem]
             }
             res = false
@@ -192,35 +212,50 @@ final class ChatModel: ObservableObject {
             res = true
         }
         // update current chat
-        if chatId == cInfo.id {
-            if let i = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
-                withAnimation(.default) {
-                    self.reversedChatItems[i] = cItem
-                    self.reversedChatItems[i].viewTimestamp = .now
+        return chatId == cInfo.id ? _upsertChatItem(cInfo, cItem) : res
+    }
+
+    private func _upsertChatItem(_ cInfo: ChatInfo, _ cItem: ChatItem) -> Bool {
+        if let i = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
+            let ci = reversedChatItems[i]
+            withAnimation {
+                self.reversedChatItems[i] = cItem
+                self.reversedChatItems[i].viewTimestamp = .now
+                // on some occasions the confirmation of message being accepted by the server (tick)
+                // arrives earlier than the response from API, and item remains without tick
+                if case .sndNew = cItem.meta.itemStatus {
+                    self.reversedChatItems[i].meta.itemStatus = ci.meta.itemStatus
                 }
-                return false
-            } else {
-                withAnimation { reversedChatItems.insert(cItem, at: 0) }
-                return true
             }
+            return false
         } else {
-            return res
+            withAnimation(itemAnimation()) {
+                reversedChatItems.insert(cItem, at: hasLiveDummy ? 1 : 0)
+            }
+            return true
+        }
+
+        func itemAnimation() -> Animation? {
+            switch cItem.chatDir {
+            case .directSnd, .groupSnd: return cItem.meta.isLive ? nil : .default
+            default: return .default
+            }
         }
     }
     
     func removeChatItem(_ cInfo: ChatInfo, _ cItem: ChatItem) {
+        if cItem.isRcvNew {
+            decreaseUnreadCounter(cInfo)
+        }
         // update previews
         if let chat = getChat(cInfo.id) {
             if let pItem = chat.chatItems.last, pItem.id == cItem.id {
-                chat.chatItems = [cItem]
+                chat.chatItems = [ChatItem.deletedItemDummy()]
             }
         }
         // remove from current chat
         if chatId == cInfo.id {
             if let i = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
-                if reversedChatItems[i].isRcvNew() == true {
-                    NtfManager.shared.decNtfBadgeCount()
-                }
                 _ = withAnimation {
                     self.reversedChatItems.remove(at: i)
                 }
@@ -228,10 +263,60 @@ final class ChatModel: ObservableObject {
         }
     }
 
+    func nextChatItemData<T>(_ chatItemId: Int64, previous: Bool, map: @escaping (ChatItem) -> T?) -> T? {
+        guard var i = reversedChatItems.firstIndex(where: { $0.id == chatItemId }) else { return nil }
+        if previous {
+            while i < reversedChatItems.count - 1 {
+                i += 1
+                if let res = map(reversedChatItems[i]) { return res }
+            }
+        } else {
+            while i > 0 {
+                i -= 1
+                if let res = map(reversedChatItems[i]) { return res }
+            }
+        }
+        return nil
+    }
+
+    func updateCurrentUser(_ newProfile: Profile, _ preferences: FullPreferences? = nil) {
+        if let current = currentUser {
+            currentUser?.profile = toLocalProfile(current.profile.profileId, newProfile, "")
+            if let preferences = preferences {
+                currentUser?.fullPreferences = preferences
+            }
+            if let current = currentUser, let i = users.firstIndex(where: { $0.user.userId == current.userId }) {
+                users[i].user = current
+            }
+        }
+    }
+
+    func addLiveDummy(_ chatInfo: ChatInfo) -> ChatItem {
+        let cItem = ChatItem.liveDummy(chatInfo.chatType)
+        withAnimation {
+            reversedChatItems.insert(cItem, at: 0)
+        }
+        return cItem
+    }
+
+    func removeLiveDummy(animated: Bool = true) {
+        if hasLiveDummy {
+            if animated {
+                withAnimation { _ = reversedChatItems.removeFirst() }
+            } else {
+                _ = reversedChatItems.removeFirst()
+            }
+        }
+    }
+
+    private var hasLiveDummy: Bool {
+        reversedChatItems.first?.isLiveDummy == true
+    }
+
     func markChatItemsRead(_ cInfo: ChatInfo) {
         // update preview
-        if let chat = getChat(cInfo.id) {
-            NtfManager.shared.decNtfBadgeCount(by: chat.chatStats.unreadCount)
+        _updateChat(cInfo.id) { chat in
+            self.decreaseUnreadCounter(user: self.currentUser!, by: chat.chatStats.unreadCount)
             chat.chatStats = ChatStats()
         }
         // update current chat
@@ -243,10 +328,7 @@ final class ChatModel: ObservableObject {
     private func markCurrentChatRead(fromIndex i: Int = 0) {
         var j = i
         while j < reversedChatItems.count {
-            if case .rcvNew = reversedChatItems[j].meta.itemStatus {
-                reversedChatItems[j].meta.itemStatus = .rcvRead
-                reversedChatItems[j].viewTimestamp = .now
-            }
+            markChatItemRead_(j)
             j += 1
         }
     }
@@ -255,11 +337,11 @@ final class ChatModel: ObservableObject {
         if let cItem = aboveItem {
             if chatId == cInfo.id, let i = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
                 markCurrentChatRead(fromIndex: i)
-                if let chat = getChat(cInfo.id) {
+                _updateChat(cInfo.id) { chat in
                     var unreadBelow = 0
                     var j = i - 1
                     while j >= 0 {
-                        if case .rcvNew = reversedChatItems[j].meta.itemStatus {
+                        if case .rcvNew = self.reversedChatItems[j].meta.itemStatus {
                             unreadBelow += 1
                         }
                         j -= 1
@@ -267,8 +349,8 @@ final class ChatModel: ObservableObject {
                     // update preview
                     let markedCount = chat.chatStats.unreadCount - unreadBelow
                     if markedCount > 0 {
-                        NtfManager.shared.decNtfBadgeCount(by: markedCount)
                         chat.chatStats.unreadCount -= markedCount
+                        self.decreaseUnreadCounter(user: self.currentUser!, by: markedCount)
                     }
                 }
             }
@@ -276,11 +358,17 @@ final class ChatModel: ObservableObject {
             markChatItemsRead(cInfo)
         }
     }
+   
+    func markChatUnread(_ cInfo: ChatInfo, unreadChat: Bool = true) {
+        _updateChat(cInfo.id) { chat in
+            chat.chatStats.unreadChat = unreadChat
+        }
+    }
 
     func clearChat(_ cInfo: ChatInfo) {
         // clear preview
         if let chat = getChat(cInfo.id) {
-            NtfManager.shared.decNtfBadgeCount(by: chat.chatStats.unreadCount)
+            self.decreaseUnreadCounter(user: self.currentUser!, by: chat.chatStats.unreadCount)
             chat.chatItems = []
             chat.chatStats = ChatStats()
             chat.chatInfo = cInfo
@@ -293,18 +381,50 @@ final class ChatModel: ObservableObject {
 
     func markChatItemRead(_ cInfo: ChatInfo, _ cItem: ChatItem) {
         // update preview
-        if let i = getChatIndex(cInfo.id) {
-            chats[i].chatStats.unreadCount = chats[i].chatStats.unreadCount - 1
-        }
+        decreaseUnreadCounter(cInfo)
         // update current chat
-        if chatId == cInfo.id, let j = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
-            reversedChatItems[j].meta.itemStatus = .rcvRead
-            reversedChatItems[j].viewTimestamp = .now
+        if chatId == cInfo.id, let i = reversedChatItems.firstIndex(where: { $0.id == cItem.id }) {
+            markChatItemRead_(i)
         }
     }
 
-    func totalUnreadCount() -> Int {
-        chats.reduce(0, { count, chat in count + chat.chatStats.unreadCount })
+    private func markChatItemRead_(_ i: Int) {
+        let meta = reversedChatItems[i].meta
+        if case .rcvNew = meta.itemStatus {
+            reversedChatItems[i].meta.itemStatus = .rcvRead
+            reversedChatItems[i].viewTimestamp = .now
+            if meta.itemLive != true, let ttl = meta.itemTimed?.ttl {
+                reversedChatItems[i].meta.itemTimed?.deleteAt = .now + TimeInterval(ttl)
+            }
+        }
+    }
+
+    func decreaseUnreadCounter(_ cInfo: ChatInfo) {
+        if let i = getChatIndex(cInfo.id) {
+            chats[i].chatStats.unreadCount = chats[i].chatStats.unreadCount - 1
+            decreaseUnreadCounter(user: currentUser!)
+        }
+    }
+
+    func increaseUnreadCounter(user: User) {
+        changeUnreadCounter(user: user, by: 1)
+        NtfManager.shared.incNtfBadgeCount()
+    }
+
+    func decreaseUnreadCounter(user: User, by: Int = 1) {
+        changeUnreadCounter(user: user, by: -by)
+        NtfManager.shared.decNtfBadgeCount(by: by)
+    }
+
+    private func changeUnreadCounter(user: User, by: Int) {
+        if let i = users.firstIndex(where: { $0.user.id == user.id }) {
+            users[i].unreadCount += by
+        }
+    }
+
+    func totalUnreadCountForAllUsers() -> Int {
+        chats.filter { $0.chatInfo.ntfsEnabled }.reduce(0, { count, chat in count + chat.chatStats.unreadCount }) +
+            users.filter { !$0.user.activeUser }.reduce(0, { unread, next -> Int in unread + next.unreadCount })
     }
 
     func getPrevChatItem(_ ci: ChatItem) -> ChatItem? {
@@ -326,6 +446,15 @@ final class ChatModel: ObservableObject {
         chats.insert(chat, at: position)
     }
 
+    func dismissConnReqView(_ id: String) {
+        if let connReqInv = connReqInv,
+           let c = getChat(id),
+           case let .contactConnection(contactConnection) = c.chatInfo,
+           connReqInv == contactConnection.connReqInv {
+            dismissAllSheets()
+        }
+    }
+
     func removeChat(_ id: String) {
         withAnimation {
             chats.removeAll(where: { $0.id == id })
@@ -333,6 +462,11 @@ final class ChatModel: ObservableObject {
     }
 
     func upsertGroupMember(_ groupInfo: GroupInfo, _ member: GroupMember) -> Bool {
+        // user member was updated
+        if groupInfo.membership.groupMemberId == member.groupMemberId {
+            updateGroup(groupInfo)
+            return false
+        }
         // update current chat
         if chatId == groupInfo.id {
             if let i = groupMembers.firstIndex(where: { $0.id == member.id }) {
@@ -355,7 +489,7 @@ final class ChatModel: ObservableObject {
         var unreadBelow = 0
         while i < reversedChatItems.count - 1 && !itemsInView.contains(reversedChatItems[i].viewId) {
             totalBelow += 1
-            if reversedChatItems[i].isRcvNew() {
+            if reversedChatItems[i].isRcvNew {
                 unreadBelow += 1
             }
             i += 1
@@ -371,6 +505,21 @@ final class ChatModel: ObservableObject {
         while i < maxIx && inView(i) { i += 1 }
         return reversedChatItems[min(i - 1, maxIx)]
     }
+
+    func setContactNetworkStatus(_ contact: Contact, _ status: NetworkStatus) {
+        networkStatuses[contact.activeConn.agentConnId] = status
+    }
+
+    func contactNetworkStatus(_ contact: Contact) -> NetworkStatus {
+        networkStatuses[contact.activeConn.agentConnId] ?? .unknown
+    }
+
+    func addTerminalItem(_ item: TerminalItem) {
+        if terminalItems.count >= 500 {
+            terminalItems.remove(at: 0)
+        }
+        terminalItems.append(item)
+    }
 }
 
 struct UnreadChatItemCounts {
@@ -382,50 +531,7 @@ final class Chat: ObservableObject, Identifiable {
     @Published var chatInfo: ChatInfo
     @Published var chatItems: [ChatItem]
     @Published var chatStats: ChatStats
-    @Published var serverInfo = ServerInfo(networkStatus: .unknown)
     var created = Date.now
-
-    struct ServerInfo: Decodable {
-        var networkStatus: NetworkStatus
-    }
-
-    enum NetworkStatus: Decodable, Equatable {
-        case unknown
-        case connected
-        case disconnected
-        case error(String)
-
-        var statusString: LocalizedStringKey {
-            get {
-                switch self {
-                case .connected: return "connected"
-                case .error: return "error"
-                default: return "connecting"
-                }
-            }
-        }
-
-        var statusExplanation: LocalizedStringKey {
-            get {
-                switch self {
-                case .connected: return "You are connected to the server used to receive messages from this contact."
-                case let .error(err): return "Trying to connect to the server used to receive messages from this contact (error: \(err))."
-                default: return "Trying to connect to the server used to receive messages from this contact."
-                }
-            }
-        }
-
-        var imageName: String {
-            get {
-                switch self {
-                case .unknown: return "circle.dotted"
-                case .connected: return "circle.fill"
-                case .disconnected: return "ellipsis.circle.fill"
-                case .error: return "exclamationmark.circle.fill"
-                }
-            }
-        }
-    }
 
     init(_ cData: ChatData) {
         self.chatInfo = cData.chatInfo
@@ -433,14 +539,53 @@ final class Chat: ObservableObject, Identifiable {
         self.chatStats = cData.chatStats
     }
 
-    init(chatInfo: ChatInfo, chatItems: [ChatItem] = [], chatStats: ChatStats = ChatStats(), serverInfo: ServerInfo = ServerInfo(networkStatus: .unknown)) {
+    init(chatInfo: ChatInfo, chatItems: [ChatItem] = [], chatStats: ChatStats = ChatStats()) {
         self.chatInfo = chatInfo
         self.chatItems = chatItems
         self.chatStats = chatStats
-        self.serverInfo = serverInfo
     }
 
     var id: ChatId { get { chatInfo.id } }
 
     var viewId: String { get { "\(chatInfo.id) \(created.timeIntervalSince1970)" } }
+
+    public static var sampleData: Chat = Chat(chatInfo: ChatInfo.sampleData.direct, chatItems: [])
+}
+
+enum NetworkStatus: Decodable, Equatable {
+    case unknown
+    case connected
+    case disconnected
+    case error(String)
+
+    var statusString: LocalizedStringKey {
+        get {
+            switch self {
+            case .connected: return "connected"
+            case .error: return "error"
+            default: return "connecting"
+            }
+        }
+    }
+
+    var statusExplanation: LocalizedStringKey {
+        get {
+            switch self {
+            case .connected: return "You are connected to the server used to receive messages from this contact."
+            case let .error(err): return "Trying to connect to the server used to receive messages from this contact (error: \(err))."
+            default: return "Trying to connect to the server used to receive messages from this contact."
+            }
+        }
+    }
+
+    var imageName: String {
+        get {
+            switch self {
+            case .unknown: return "circle.dotted"
+            case .connected: return "circle.fill"
+            case .disconnected: return "ellipsis.circle.fill"
+            case .error: return "exclamationmark.circle.fill"
+            }
+        }
+    }
 }

@@ -1,4 +1,5 @@
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.*
@@ -10,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
 import chat.simplex.app.ui.theme.*
@@ -17,16 +20,38 @@ import chat.simplex.app.views.helpers.ValueTitleDesc
 import chat.simplex.app.views.helpers.ValueTitle
 
 @Composable
-fun SectionView(title: String? = null, content: (@Composable () -> Unit)) {
+fun SectionView(title: String? = null, padding: PaddingValues = PaddingValues(), content: (@Composable ColumnScope.() -> Unit)) {
   Column {
     if (title != null) {
       Text(
         title, color = HighOrLowlight, style = MaterialTheme.typography.body2,
-        modifier = Modifier.padding(start = 16.dp, bottom = 5.dp), fontSize = 12.sp
+        modifier = Modifier.padding(start = DEFAULT_PADDING, bottom = 5.dp), fontSize = 12.sp
       )
     }
     Surface(color = if (isInDarkTheme()) GroupDark else MaterialTheme.colors.background) {
-      Column(Modifier.padding(horizontal = 6.dp).fillMaxWidth()) { content() }
+      Column(Modifier.padding(padding).fillMaxWidth()) { content() }
+    }
+  }
+}
+
+@Composable
+fun SectionView(
+  title: String,
+  icon: ImageVector,
+  iconTint: Color = HighOrLowlight,
+  leadingIcon: Boolean = false,
+  padding: PaddingValues = PaddingValues(),
+  content: (@Composable ColumnScope.() -> Unit)
+) {
+  Column {
+    val iconSize = with(LocalDensity.current) { 21.sp.toDp() }
+    Row(Modifier.padding(start = DEFAULT_PADDING, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+      if (leadingIcon) Icon(icon, null, Modifier.padding(end = 4.dp).size(iconSize), tint = iconTint)
+      Text(title, color = HighOrLowlight, style = MaterialTheme.typography.body2, fontSize = 12.sp)
+      if (!leadingIcon) Icon(icon, null, Modifier.padding(start = 4.dp).size(iconSize), tint = iconTint)
+    }
+    Surface(color = if (isInDarkTheme()) GroupDark else MaterialTheme.colors.background) {
+      Column(Modifier.padding(padding).fillMaxWidth()) { content() }
     }
   }
 }
@@ -34,20 +59,18 @@ fun SectionView(title: String? = null, content: (@Composable () -> Unit)) {
 @Composable
 fun <T> SectionViewSelectable(
   title: String?,
-  currentValue: MutableState<T>,
+  currentValue: State<T>,
   values: List<ValueTitleDesc<T>>,
   onSelected: (T) -> Unit,
 ) {
   SectionView(title) {
-    LazyColumn(
-      Modifier.padding(horizontal = 8.dp)
-    ) {
+    LazyColumn {
       items(values.size) { index ->
         val item = values[index]
-        SectionItemViewSpaceBetween({ onSelected(item.value) }, padding = PaddingValues()) {
+        SectionItemViewSpaceBetween({ onSelected(item.value) }) {
           Text(item.title)
           if (currentValue.value == item.value) {
-            Icon(Icons.Outlined.Check, item.title, tint = HighOrLowlight)
+            Icon(Icons.Outlined.Check, item.title, tint = MaterialTheme.colors.primary)
           }
         }
         Spacer(Modifier.padding(horizontal = 4.dp))
@@ -58,13 +81,17 @@ fun <T> SectionViewSelectable(
 }
 
 @Composable
-fun SectionItemView(click: (() -> Unit)? = null, minHeight: Dp = 46.dp, disabled: Boolean = false, content: (@Composable RowScope.() -> Unit)) {
+fun SectionItemView(
+  click: (() -> Unit)? = null,
+  minHeight: Dp = 46.dp,
+  disabled: Boolean = false,
+  content: (@Composable RowScope.() -> Unit)
+) {
   val modifier = Modifier
-    .padding(horizontal = 8.dp)
     .fillMaxWidth()
     .sizeIn(minHeight = minHeight)
   Row(
-    if (click == null || disabled) modifier else modifier.clickable(onClick = click),
+    if (click == null || disabled) modifier.padding(horizontal = DEFAULT_PADDING) else modifier.clickable(onClick = click).padding(horizontal = DEFAULT_PADDING),
     verticalAlignment = Alignment.CenterVertically
   ) {
     content()
@@ -74,17 +101,17 @@ fun SectionItemView(click: (() -> Unit)? = null, minHeight: Dp = 46.dp, disabled
 @Composable
 fun SectionItemViewSpaceBetween(
   click: (() -> Unit)? = null,
+  onLongClick: (() -> Unit)? = null,
   minHeight: Dp = 46.dp,
-  padding: PaddingValues = PaddingValues(horizontal = 8.dp),
+  padding: PaddingValues = PaddingValues(horizontal = DEFAULT_PADDING),
   disabled: Boolean = false,
-  content: (@Composable () -> Unit)
+  content: (@Composable RowScope.() -> Unit)
 ) {
   val modifier = Modifier
-    .padding(padding)
     .fillMaxWidth()
     .sizeIn(minHeight = minHeight)
   Row(
-    if (click == null || disabled) modifier else modifier.clickable(onClick = click),
+    if (click == null || disabled) modifier.padding(padding) else modifier.combinedClickable(onClick = click, onLongClick = onLongClick).padding(padding),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically
   ) {
@@ -133,9 +160,14 @@ fun <T> SectionItemWithValue(
 
 @Composable
 fun SectionTextFooter(text: String) {
+  SectionTextFooter(AnnotatedString(text))
+}
+
+@Composable
+fun SectionTextFooter(text: AnnotatedString) {
   Text(
     text,
-    Modifier.padding(horizontal = 16.dp).padding(top = 8.dp).fillMaxWidth(0.9F),
+    Modifier.padding(start = DEFAULT_PADDING, end = DEFAULT_PADDING, top = DEFAULT_PADDING_HALF).fillMaxWidth(0.9F),
     color = HighOrLowlight,
     lineHeight = 18.sp,
     fontSize = 14.sp
@@ -143,7 +175,7 @@ fun SectionTextFooter(text: String) {
 }
 
 @Composable
-fun SectionCustomFooter(padding: PaddingValues = PaddingValues(start = 16.dp, end = 16.dp, top = 5.dp), content: (@Composable () -> Unit)) {
+fun SectionCustomFooter(padding: PaddingValues = PaddingValues(start = DEFAULT_PADDING, end = DEFAULT_PADDING, top = 5.dp), content: (@Composable () -> Unit)) {
   Row(
     Modifier.padding(padding)
   ) {
@@ -162,38 +194,30 @@ fun SectionSpacer() {
 }
 
 @Composable
-fun InfoRow(title: String, value: String) {
-  SectionItemView {
-    Row(
-      Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically
-    ) {
+fun InfoRow(title: String, value: String, icon: ImageVector? = null, iconTint: Color? = null) {
+  SectionItemViewSpaceBetween {
+    Row {
+      val iconSize = with(LocalDensity.current) { 21.sp.toDp() }
+      if (icon != null) Icon(icon, title, Modifier.padding(end = 8.dp).size(iconSize), tint = iconTint ?: HighOrLowlight)
       Text(title)
-      Text(value, color = HighOrLowlight)
     }
+    Text(value, color = HighOrLowlight)
   }
 }
 
 @Composable
 fun InfoRowEllipsis(title: String, value: String, onClick: () -> Unit) {
-  SectionItemView {
-    Row(
-      Modifier.fillMaxWidth(),
-      horizontalArrangement = Arrangement.SpaceBetween,
-      verticalAlignment = Alignment.CenterVertically
-    ) {
-      val configuration = LocalConfiguration.current
-      Text(title)
-      Text(value,
-        Modifier
-          .padding(start = 10.dp)
-          .widthIn(max = (configuration.screenWidthDp / 2).dp)
-          .clickable(onClick = onClick),
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        color = HighOrLowlight
-      )
-    }
+  SectionItemViewSpaceBetween(onClick) {
+    val configuration = LocalConfiguration.current
+    Text(title)
+    Text(
+      value,
+      Modifier
+        .padding(start = 10.dp)
+        .widthIn(max = (configuration.screenWidthDp / 2).dp),
+      maxLines = 1,
+      overflow = TextOverflow.Ellipsis,
+      color = HighOrLowlight
+    )
   }
 }

@@ -29,6 +29,38 @@ fun SimpleButton(text: String, icon: ImageVector,
 }
 
 @Composable
+fun SimpleButton(
+  text: String, icon: ImageVector,
+  color: Color = MaterialTheme.colors.primary,
+  disabled: Boolean,
+  click: () -> Unit
+) {
+  SimpleButtonFrame(click, disabled = disabled) {
+    Icon(
+      icon, text, tint = if (disabled) HighOrLowlight else color,
+      modifier = Modifier.padding(end = 8.dp)
+    )
+    Text(text, style = MaterialTheme.typography.caption, color = if (disabled) HighOrLowlight else color)
+  }
+}
+
+@Composable
+fun SimpleButtonIconEnded(
+  text: String,
+  icon: ImageVector,
+  color: Color = MaterialTheme.colors.primary,
+  click: () -> Unit
+) {
+  SimpleButtonFrame(click) {
+    Text(text, style = MaterialTheme.typography.caption, color = color)
+    Icon(
+      icon, text, tint = color,
+      modifier = Modifier.padding(start = 8.dp)
+    )
+  }
+}
+
+@Composable
 fun SimpleButtonFrame(click: () -> Unit, disabled: Boolean = false, content: @Composable () -> Unit) {
   Surface(shape = RoundedCornerShape(20.dp)) {
     val modifier = if (disabled) Modifier else Modifier.clickable { click() }

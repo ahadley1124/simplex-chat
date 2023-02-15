@@ -18,6 +18,15 @@ func infoRow(_ title: LocalizedStringKey, _ value: String) -> some View {
     }
 }
 
+func infoRow(_ title: Text, _ value: String) -> some View {
+    HStack {
+        title
+        Spacer()
+        Text(value)
+            .foregroundStyle(.secondary)
+    }
+}
+
 func localizedInfoRow(_ title: LocalizedStringKey, _ value: LocalizedStringKey) -> some View {
     HStack {
         Text(title)
@@ -30,7 +39,14 @@ func localizedInfoRow(_ title: LocalizedStringKey, _ value: LocalizedStringKey) 
 @ViewBuilder func smpServers(_ title: LocalizedStringKey, _ servers: [String]?) -> some View {
     if let servers = servers,
        servers.count > 0 {
-        infoRow(title, serverHost(servers[0]))
+        HStack {
+            Text(title).frame(width: 120, alignment: .leading)
+            Button(serverHost(servers[0])) {
+                UIPasteboard.general.string = servers.joined(separator: ";")
+            }
+            .foregroundColor(.secondary)
+            .lineLimit(1)
+        }
     }
 }
 
@@ -46,26 +62,29 @@ struct ChatInfoView: View {
     @EnvironmentObject var chatModel: ChatModel
     @Environment(\.dismiss) var dismiss: DismissAction
     @ObservedObject var chat: Chat
-    var contact: Contact
-    var connectionStats: ConnectionStats?
-    var customUserProfile: Profile?
+    @State var contact: Contact
+    @Binding var connectionStats: ConnectionStats?
+    @Binding var customUserProfile: Profile?
     @State var localAlias: String
+    @Binding var connectionCode: String?
     @FocusState private var aliasTextFieldFocused: Bool
     @State private var alert: ChatInfoViewAlert? = nil
     @AppStorage(DEFAULT_DEVELOPER_TOOLS) private var developerTools = false
 
     enum ChatInfoViewAlert: Identifiable {
         case deleteContactAlert
-        case contactGroupsAlert(groupNames: [GroupName])
         case clearChatAlert
         case networkStatusAlert
+        case switchAddressAlert
+        case error(title: LocalizedStringKey, error: LocalizedStringKey = "")
 
         var id: String {
             switch self {
             case .deleteContactAlert: return "deleteContactAlert"
-            case .contactGroupsAlert: return "contactGroupsAlert"
             case .clearChatAlert: return "clearChatAlert"
             case .networkStatusAlert: return "networkStatusAlert"
+            case .switchAddressAlert: return "switchAddressAlert"
+            case let .error(title, _): return "error \(title)"
             }
         }
     }
@@ -80,7 +99,9 @@ struct ChatInfoView: View {
                         aliasTextFieldFocused = false
                     }
 
-                localAliasTextEdit()
+                Group {
+                    localAliasTextEdit()
+                }
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
 
@@ -90,12 +111,20 @@ struct ChatInfoView: View {
                     }
                 }
 
-                if let connStats = connectionStats {
-                    Section("Servers") {
-                        networkStatusRow()
-                            .onTapGesture {
-                                alert = .networkStatusAlert
-                            }
+                Section {
+                    if let code = connectionCode { verifyCodeButton(code) }
+                    contactPreferencesButton()
+                }
+
+                Section("Servers") {
+                    networkStatusRow()
+                        .onTapGesture {
+                            alert = .networkStatusAlert
+                        }
+                    Button("Change receiving address") {
+                        alert = .switchAddressAlert
+                    }
+                    if let connStats = connectionStats {
                         smpServers("Receiving via", connStats.rcvServers)
                         smpServers("Sending via", connStats.sndServers)
                     }
@@ -119,24 +148,31 @@ struct ChatInfoView: View {
         .alert(item: $alert) { alertItem in
             switch(alertItem) {
             case .deleteContactAlert: return deleteContactAlert()
-            case let .contactGroupsAlert(groupNames): return contactGroupsAlert(groupNames)
             case .clearChatAlert: return clearChatAlert()
             case .networkStatusAlert: return networkStatusAlert()
+            case .switchAddressAlert: return switchAddressAlert(switchContactAddress)
+            case let .error(title, error): return mkAlert(title: title, message: error)
             }
         }
     }
 
-    func contactInfoHeader() -> some View {
+    private func contactInfoHeader() -> some View {
         VStack {
             let cInfo = chat.chatInfo
             ChatInfoImage(chat: chat, color: Color(uiColor: .tertiarySystemFill))
                 .frame(width: 192, height: 192)
                 .padding(.top, 12)
                 .padding()
-            Text(contact.profile.displayName)
-                .font(.largeTitle)
-                .lineLimit(1)
-                .padding(.bottom, 2)
+            HStack {
+                if contact.verified {
+                    Image(systemName: "checkmark.shield")
+                        .foregroundColor(.secondary)
+                }
+                Text(contact.profile.displayName)
+                    .font(.largeTitle)
+                    .lineLimit(1)
+                    .padding(.bottom, 2)
+            }
             if cInfo.fullName != "" && cInfo.fullName != cInfo.displayName && cInfo.fullName != contact.profile.displayName {
                 Text(cInfo.fullName)
                     .font(.title2)
@@ -146,7 +182,7 @@ struct ChatInfoView: View {
         .frame(maxWidth: .infinity, alignment: .center)
     }
 
-    func localAliasTextEdit() -> some View {
+    private func localAliasTextEdit() -> some View {
         TextField("Set contact name…", text: $localAlias)
             .disableAutocorrection(true)
             .focused($aliasTextFieldFocused)
@@ -177,27 +213,70 @@ struct ChatInfoView: View {
         }
     }
 
-    func networkStatusRow() -> some View {
+    private func verifyCodeButton(_ code: String) -> some View {
+        NavigationLink {
+            VerifyCodeView(
+                displayName: contact.displayName,
+                connectionCode: code,
+                connectionVerified: contact.verified,
+                verify: { code in
+                    if let r = apiVerifyContact(chat.chatInfo.apiId, connectionCode: code) {
+                        let (verified, existingCode) = r
+                        contact.activeConn.connectionCode = verified ? SecurityCode(securityCode: existingCode, verifiedAt: .now) : nil
+                        connectionCode = existingCode
+                        DispatchQueue.main.async {
+                            chat.chatInfo = .direct(contact: contact)
+                        }
+                        return r
+                    }
+                    return nil
+                }
+            )
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("Security code")
+        } label: {
+            Label(
+                contact.verified ? "View security code" : "Verify security code",
+                systemImage: contact.verified ? "checkmark.shield" : "shield"
+            )
+        }
+    }
+
+    private func contactPreferencesButton() -> some View {
+        NavigationLink {
+            ContactPreferencesView(
+                contact: $contact,
+                featuresAllowed: contactUserPrefsToFeaturesAllowed(contact.mergedPreferences),
+                currentFeaturesAllowed: contactUserPrefsToFeaturesAllowed(contact.mergedPreferences)
+            )
+            .navigationBarTitle("Contact preferences")
+            .navigationBarTitleDisplayMode(.large)
+        } label: {
+            Label("Contact preferences", systemImage: "switch.2")
+        }
+    }
+
+    private func networkStatusRow() -> some View {
         HStack {
             Text("Network status")
             Image(systemName: "info.circle")
                 .foregroundColor(.accentColor)
                 .font(.system(size: 14))
             Spacer()
-            Text(chat.serverInfo.networkStatus.statusString)
+            Text(chatModel.contactNetworkStatus(contact).statusString)
                 .foregroundColor(.secondary)
             serverImage()
         }
     }
 
-    func serverImage() -> some View {
-        let status = chat.serverInfo.networkStatus
+    private func serverImage() -> some View {
+        let status = chatModel.contactNetworkStatus(contact)
         return Image(systemName: status.imageName)
             .foregroundColor(status == .connected ? .green : .secondary)
             .font(.system(size: 12))
     }
 
-    func deleteContactButton() -> some View {
+    private func deleteContactButton() -> some View {
         Button(role: .destructive) {
             alert = .deleteContactAlert
         } label: {
@@ -206,7 +285,7 @@ struct ChatInfoView: View {
         }
     }
 
-    func clearChatButton() -> some View {
+    private func clearChatButton() -> some View {
         Button() {
             alert = .clearChatAlert
         } label: {
@@ -229,21 +308,15 @@ struct ChatInfoView: View {
                             dismiss()
                         }
                     } catch let error {
-                        logger.error("deleteContactAlert apiDeleteChat error: \(error.localizedDescription)")
-                        if case let .chatCmdError(.error(.contactGroups(_, groupNames))) = error as? ChatResponse {
-                            alert = .contactGroupsAlert(groupNames: groupNames)
+                        logger.error("deleteContactAlert apiDeleteChat error: \(responseError(error))")
+                        let a = getErrorAlert(error, "Error deleting contact")
+                        await MainActor.run {
+                            alert = .error(title: a.title, error: a.message)
                         }
                     }
                 }
             },
             secondaryButton: .cancel()
-        )
-    }
-
-    private func contactGroupsAlert(_ groupNames: [GroupName]) -> Alert {
-        Alert(
-            title: Text("Can't delete contact!"),
-            message: Text("Contact \(contact.displayName) cannot be deleted, they are a member of the group(s) \(groupNames.joined(separator: ", ")).")
         )
     }
 
@@ -264,13 +337,43 @@ struct ChatInfoView: View {
     private func networkStatusAlert() -> Alert {
         Alert(
             title: Text("Network status"),
-            message: Text(chat.serverInfo.networkStatus.statusExplanation)
+            message: Text(chatModel.contactNetworkStatus(contact).statusExplanation)
         )
     }
+
+    private func switchContactAddress() {
+        Task {
+            do {
+                try await apiSwitchContact(contactId: contact.apiId)
+            } catch let error {
+                logger.error("switchContactAddress apiSwitchContact error: \(responseError(error))")
+                let a = getErrorAlert(error, "Error changing address")
+                await MainActor.run {
+                    alert = .error(title: a.title, error: a.message)
+                }
+            }
+        }
+    }
+}
+
+func switchAddressAlert(_ switchAddress: @escaping () -> Void) -> Alert {
+    Alert(
+        title: Text("Change receiving address?"),
+        message: Text("This feature is experimental! It will only work if the other client has version 4.2 installed. You should see the message in the conversation once the address change is completed – please check that you can still receive messages from this contact (or group member)."),
+        primaryButton: .destructive(Text("Change"), action: switchAddress),
+        secondaryButton: .cancel()
+    )
 }
 
 struct ChatInfoView_Previews: PreviewProvider {
     static var previews: some View {
-        ChatInfoView(chat: Chat(chatInfo: ChatInfo.sampleData.direct, chatItems: []), contact: Contact.sampleData, localAlias: "")
+        ChatInfoView(
+            chat: Chat(chatInfo: ChatInfo.sampleData.direct, chatItems: []),
+            contact: Contact.sampleData,
+            connectionStats: Binding.constant(nil),
+            customUserProfile: Binding.constant(nil),
+            localAlias: "",
+            connectionCode: Binding.constant(nil)
+        )
     }
 }

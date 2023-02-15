@@ -35,8 +35,10 @@ import chat.simplex.app.SimplexApp
 import chat.simplex.app.model.*
 import chat.simplex.app.ui.theme.*
 import chat.simplex.app.views.helpers.*
+import chat.simplex.app.views.usersettings.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
+import kotlinx.datetime.Clock
 
 @Composable
 fun ChatInfoView(
@@ -45,25 +47,66 @@ fun ChatInfoView(
   connStats: ConnectionStats?,
   customUserProfile: Profile?,
   localAlias: String,
+  connectionCode: String?,
   close: () -> Unit,
-  onChatUpdated: (Chat) -> Unit,
 ) {
   BackHandler(onBack = close)
   val chat = chatModel.chats.firstOrNull { it.id == chatModel.chatId.value }
   val developerTools = chatModel.controller.appPrefs.developerTools.get()
   if (chat != null) {
+    val contactNetworkStatus = remember(chatModel.networkStatuses.toMap()) {
+      mutableStateOf(chatModel.contactNetworkStatus(contact))
+    }
     ChatInfoLayout(
       chat,
       contact,
       connStats,
+      contactNetworkStatus.value,
       customUserProfile,
       localAlias,
+      connectionCode,
       developerTools,
       onLocalAliasChanged = {
-        setContactAlias(chat.chatInfo.apiId, it, chatModel, onChatUpdated)
+        setContactAlias(chat.chatInfo.apiId, it, chatModel)
+      },
+      openPreferences = {
+        ModalManager.shared.showCustomModal { close ->
+          val user = chatModel.currentUser.value
+          if (user != null) {
+            ContactPreferencesView(chatModel, user, contact.contactId, close)
+          }
+        }
       },
       deleteContact = { deleteContactDialog(chat.chatInfo, chatModel, close) },
       clearChat = { clearChatDialog(chat.chatInfo, chatModel, close) },
+      switchContactAddress = {
+        showSwitchContactAddressAlert(chatModel, contact.contactId)
+      },
+      verifyClicked = {
+        ModalManager.shared.showModalCloseable { close ->
+          remember { derivedStateOf { (chatModel.getContactChat(contact.contactId)?.chatInfo as? ChatInfo.Direct)?.contact } }.value?.let { ct ->
+            VerifyCodeView(
+              ct.displayName,
+              connectionCode,
+              ct.verified,
+              verify = { code ->
+                chatModel.controller.apiVerifyContact(ct.contactId, code)?.let { r ->
+                  val (verified, existingCode) = r
+                  chatModel.updateContact(
+                    ct.copy(
+                      activeConn = ct.activeConn.copy(
+                        connectionCode = if (verified) SecurityCode(existingCode, Clock.System.now()) else null
+                      )
+                    )
+                  )
+                  r
+                }
+              },
+              close,
+            )
+          }
+        }
+      }
     )
   }
 }
@@ -110,12 +153,17 @@ fun ChatInfoLayout(
   chat: Chat,
   contact: Contact,
   connStats: ConnectionStats?,
+  contactNetworkStatus: NetworkStatus,
   customUserProfile: Profile?,
   localAlias: String,
+  connectionCode: String?,
   developerTools: Boolean,
   onLocalAliasChanged: (String) -> Unit,
+  openPreferences: () -> Unit,
   deleteContact: () -> Unit,
   clearChat: () -> Unit,
+  switchContactAddress: () -> Unit,
+  verifyClicked: () -> Unit,
 ) {
   Column(
     Modifier
@@ -140,11 +188,26 @@ fun ChatInfoLayout(
     }
 
     SectionSpacer()
+    SectionView {
+      if (connectionCode != null) {
+        VerifyCodeButton(contact.verified, verifyClicked)
+        SectionDivider()
+      }
+      ContactPreferencesButton(openPreferences)
+    }
 
-    if (connStats != null) {
-      SectionView(title = stringResource(R.string.conn_stats_section_title_servers)) {
-        SectionItemView {
-          NetworkStatusRow(chat.serverInfo.networkStatus)
+    SectionSpacer()
+
+    SectionView(title = stringResource(R.string.conn_stats_section_title_servers)) {
+      SwitchAddressButton(switchContactAddress)
+      SectionDivider()
+      if (connStats != null) {
+        SectionItemView({
+          AlertManager.shared.showAlertMsg(
+            generalGetString(R.string.network_status),
+            contactNetworkStatus.statusExplanation
+          )}) {
+          NetworkStatusRow(contactNetworkStatus)
         }
         val rcvServers = connStats.rcvServers
         if (rcvServers != null && rcvServers.isNotEmpty()) {
@@ -157,16 +220,12 @@ fun ChatInfoLayout(
           SimplexServers(stringResource(R.string.sending_via), sndServers)
         }
       }
-      SectionSpacer()
     }
+    SectionSpacer()
     SectionView {
-      SectionItemView {
-        ClearChatButton(clearChat)
-      }
+      ClearChatButton(clearChat)
       SectionDivider()
-      SectionItemView {
-        DeleteContactButton(deleteContact)
-      }
+      DeleteContactButton(deleteContact)
     }
     SectionSpacer()
 
@@ -188,13 +247,17 @@ fun ChatInfoHeader(cInfo: ChatInfo, contact: Contact) {
     horizontalAlignment = Alignment.CenterHorizontally
   ) {
     ChatInfoImage(cInfo, size = 192.dp, iconColor = if (isInDarkTheme()) GroupDark else SettingsSecondaryLight)
-    Text(
-      contact.profile.displayName, style = MaterialTheme.typography.h1.copy(fontWeight = FontWeight.Normal),
-      color = MaterialTheme.colors.onBackground,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.padding(bottom = 8.dp)
-    )
+    Row(Modifier.padding(bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+      if (contact.verified) {
+        Icon(Icons.Outlined.VerifiedUser, null, Modifier.padding(end = 6.dp, top = 4.dp).size(24.dp), tint = HighOrLowlight)
+      }
+      Text(
+        contact.profile.displayName, style = MaterialTheme.typography.h1.copy(fontWeight = FontWeight.Normal),
+        color = MaterialTheme.colors.onBackground,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+      )
+    }
     if (cInfo.fullName != "" && cInfo.fullName != cInfo.displayName && cInfo.fullName != contact.profile.displayName) {
       Text(
         cInfo.fullName, style = MaterialTheme.typography.h2,
@@ -207,21 +270,35 @@ fun ChatInfoHeader(cInfo: ChatInfo, contact: Contact) {
 }
 
 @Composable
-private fun LocalAliasEditor(initialValue: String, updateValue: (String) -> Unit) {
+fun LocalAliasEditor(
+  initialValue: String,
+  center: Boolean = true,
+  leadingIcon: Boolean = false,
+  focus: Boolean = false,
+  updateValue: (String) -> Unit
+) {
   var value by rememberSaveable { mutableStateOf(initialValue) }
-  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+  val modifier = if (center)
+    Modifier.padding(horizontal = if (!leadingIcon) DEFAULT_PADDING else 0.dp).widthIn(min = 100.dp)
+  else
+    Modifier.padding(horizontal = if (!leadingIcon) DEFAULT_PADDING else 0.dp).fillMaxWidth()
+  Row(Modifier.fillMaxWidth(), horizontalArrangement = if (center) Arrangement.Center else Arrangement.Start) {
     DefaultBasicTextField(
-      Modifier.padding(horizontal = 10.dp).widthIn(min = 100.dp),
+      modifier,
       value,
       {
         Text(
           generalGetString(R.string.text_field_set_contact_placeholder),
-          textAlign = TextAlign.Center,
+          textAlign = if (center) TextAlign.Center else TextAlign.Start,
           color = HighOrLowlight
         )
       },
+      leadingIcon = if (leadingIcon) {
+        { Icon(Icons.Default.Edit, null, Modifier.padding(start = 7.dp)) }
+      } else null,
       color = HighOrLowlight,
-      textStyle = TextStyle.Default.copy(textAlign = if (value.isEmpty()) TextAlign.Start else TextAlign.Center),
+      focus = focus,
+      textStyle = TextStyle.Default.copy(textAlign = if (value.isEmpty() || !center) TextAlign.Start else TextAlign.Center),
       keyboardActions = KeyboardActions(onDone = { updateValue(value) })
     ) {
       value = it
@@ -242,16 +319,9 @@ private fun LocalAliasEditor(initialValue: String, updateValue: (String) -> Unit
 }
 
 @Composable
-fun NetworkStatusRow(networkStatus: Chat.NetworkStatus) {
+private fun NetworkStatusRow(networkStatus: NetworkStatus) {
   Row(
-    Modifier
-      .fillMaxSize()
-      .clickable {
-        AlertManager.shared.showAlertMsg(
-          generalGetString(R.string.network_status),
-          networkStatus.statusExplanation
-        )
-      },
+    Modifier.fillMaxSize(),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically
   ) {
@@ -281,14 +351,14 @@ fun NetworkStatusRow(networkStatus: Chat.NetworkStatus) {
 }
 
 @Composable
-fun ServerImage(networkStatus: Chat.NetworkStatus) {
+private fun ServerImage(networkStatus: NetworkStatus) {
   Box(Modifier.size(18.dp)) {
     when (networkStatus) {
-      is Chat.NetworkStatus.Connected ->
+      is NetworkStatus.Connected ->
         Icon(Icons.Filled.Circle, stringResource(R.string.icon_descr_server_status_connected), tint = MaterialTheme.colors.primaryVariant)
-      is Chat.NetworkStatus.Disconnected ->
+      is NetworkStatus.Disconnected ->
         Icon(Icons.Filled.Pending, stringResource(R.string.icon_descr_server_status_disconnected), tint = HighOrLowlight)
-      is Chat.NetworkStatus.Error ->
+      is NetworkStatus.Error ->
         Icon(Icons.Filled.Error, stringResource(R.string.icon_descr_server_status_error), tint = HighOrLowlight)
       else -> Icon(Icons.Outlined.Circle, stringResource(R.string.icon_descr_server_status_pending), tint = HighOrLowlight)
     }
@@ -306,46 +376,72 @@ fun SimplexServers(text: String, servers: List<String>) {
 }
 
 @Composable
-fun ClearChatButton(clearChat: () -> Unit) {
-  Row(
-    Modifier
-      .fillMaxSize()
-      .clickable { clearChat() },
-    verticalAlignment = Alignment.CenterVertically
-  ) {
-    Icon(
-      Icons.Outlined.Restore,
-      stringResource(R.string.clear_chat_button),
-      tint = WarningOrange
-    )
-    Spacer(Modifier.size(8.dp))
-    Text(stringResource(R.string.clear_chat_button), color = WarningOrange)
+fun SwitchAddressButton(onClick: () -> Unit) {
+  SectionItemView(onClick) {
+    Text(stringResource(R.string.switch_receiving_address), color = MaterialTheme.colors.primary)
   }
 }
 
 @Composable
-fun DeleteContactButton(deleteContact: () -> Unit) {
-  Row(
-    Modifier
-      .fillMaxSize()
-      .clickable { deleteContact() },
-    verticalAlignment = Alignment.CenterVertically
-  ) {
-    Icon(
-      Icons.Outlined.Delete,
-      stringResource(R.string.button_delete_contact),
-      tint = Color.Red
-    )
-    Spacer(Modifier.size(8.dp))
-    Text(stringResource(R.string.button_delete_contact), color = Color.Red)
+fun VerifyCodeButton(contactVerified: Boolean, onClick: () -> Unit) {
+  SettingsActionItem(
+    if (contactVerified) Icons.Outlined.VerifiedUser else Icons.Outlined.Shield,
+    stringResource(if (contactVerified) R.string.view_security_code else R.string.verify_security_code),
+    click = onClick,
+    iconColor = HighOrLowlight,
+  )
+}
+
+@Composable
+private fun ContactPreferencesButton(onClick: () -> Unit) {
+  SettingsActionItem(
+    Icons.Outlined.ToggleOn,
+    stringResource(R.string.contact_preferences),
+    click = onClick
+  )
+}
+
+@Composable
+fun ClearChatButton(onClick: () -> Unit) {
+  SettingsActionItem(
+    Icons.Outlined.Restore,
+    stringResource(R.string.clear_chat_button),
+    click = onClick,
+    textColor = WarningOrange,
+    iconColor = WarningOrange,
+  )
+}
+
+@Composable
+private fun DeleteContactButton(onClick: () -> Unit) {
+  SettingsActionItem(
+    Icons.Outlined.Delete,
+    stringResource(R.string.button_delete_contact),
+    click = onClick,
+    textColor = Color.Red,
+    iconColor = Color.Red,
+  )
+}
+
+private fun setContactAlias(contactApiId: Long, localAlias: String, chatModel: ChatModel) = withApi {
+  chatModel.controller.apiSetContactAlias(contactApiId, localAlias)?.let {
+    chatModel.updateContact(it)
   }
 }
 
-private fun setContactAlias(contactApiId: Long, localAlias: String, chatModel: ChatModel, onChatUpdated: (Chat) -> Unit) = withApi {
-  chatModel.controller.apiSetContactAlias(contactApiId, localAlias)?.let {
-    chatModel.updateContact(it)
-    onChatUpdated(chatModel.getChat(chatModel.chatId.value ?: return@withApi) ?: return@withApi)
-  }
+private fun showSwitchContactAddressAlert(m: ChatModel, contactId: Long) {
+  AlertManager.shared.showAlertMsg(
+    title = generalGetString(R.string.switch_receiving_address_question),
+    text = generalGetString(R.string.switch_receiving_address_desc),
+    confirmText = generalGetString(R.string.switch_verb),
+    onConfirm = {
+      switchContactAddress(m, contactId)
+    }
+  )
+}
+
+private fun switchContactAddress(m: ChatModel, contactId: Long) = withApi {
+  m.controller.apiSwitchContact(contactId)
 }
 
 @Preview
@@ -355,16 +451,21 @@ fun PreviewChatInfoLayout() {
     ChatInfoLayout(
       chat = Chat(
         chatInfo = ChatInfo.Direct.sampleData,
-        chatItems = arrayListOf(),
-        serverInfo = Chat.ServerInfo(Chat.NetworkStatus.Error("agent BROKER TIMEOUT"))
+        chatItems = arrayListOf()
       ),
       Contact.sampleData,
       localAlias = "",
+      connectionCode = "123",
       developerTools = false,
       connStats = null,
+      contactNetworkStatus = NetworkStatus.Connected(),
       onLocalAliasChanged = {},
       customUserProfile = null,
-      deleteContact = {}, clearChat = {}
+      openPreferences = {},
+      deleteContact = {},
+      clearChat = {},
+      switchContactAddress = {},
+      verifyClicked = {},
     )
   }
 }

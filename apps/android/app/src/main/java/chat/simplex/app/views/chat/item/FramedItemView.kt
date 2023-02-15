@@ -1,31 +1,34 @@
 package chat.simplex.app.views.chat.item
 
-import CIImageView
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.*
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.*
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.tooling.preview.*
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.*
+import androidx.compose.ui.util.fastMap
 import chat.simplex.app.R
 import chat.simplex.app.model.*
 import chat.simplex.app.ui.theme.*
-import chat.simplex.app.views.helpers.ChatItemLinkView
-import chat.simplex.app.views.helpers.base64ToBitmap
+import chat.simplex.app.views.helpers.*
 import kotlinx.datetime.Clock
+import kotlin.math.min
 
 val SentColorLight = Color(0x1E45B8FF)
 val ReceivedColorLight = Color(0x20B1B0B5)
@@ -37,12 +40,16 @@ fun FramedItemView(
   chatInfo: ChatInfo,
   ci: ChatItem,
   uriHandler: UriHandler? = null,
+  imageProvider: (() -> ImageGalleryProvider)? = null,
   showMember: Boolean = false,
+  linkMode: SimplexLinkMode,
   showMenu: MutableState<Boolean>,
   receiveFile: (Long) -> Unit,
-  onLinkLongClick: (link: String) -> Unit = {}
+  onLinkLongClick: (link: String) -> Unit = {},
+  scrollToItem: (Long) -> Unit = {},
 ) {
   val sent = ci.chatDir.sent
+  val chatTTL = chatInfo.timedMessagesTTL
 
   fun membership(): GroupMember? {
     return if (chatInfo is ChatInfo.Group) chatInfo.groupInfo.membership else null
@@ -56,7 +63,39 @@ fun FramedItemView(
     ) {
       MarkdownText(
         qi.text, qi.formattedText, sender = qi.sender(membership()), senderBold = true, maxLines = 3,
-        style = TextStyle(fontSize = 15.sp, color = MaterialTheme.colors.onSurface)
+        style = TextStyle(fontSize = 15.sp, color = MaterialTheme.colors.onSurface),
+        linkMode = linkMode
+      )
+    }
+  }
+
+  @Composable
+  fun FramedItemHeader(caption: String, italic: Boolean, icon: ImageVector? = null) {
+    Row(
+      Modifier
+        .background(if (sent) SentQuoteColorLight else ReceivedQuoteColorLight)
+        .fillMaxWidth()
+        .padding(start = 8.dp)
+        .padding(end = 12.dp)
+        .padding(top = 6.dp)
+        .padding(bottom = if (ci.quotedItem == null) 6.dp else 0.dp),
+      horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      if (icon != null) {
+        Icon(
+          icon,
+          caption,
+          Modifier.size(18.dp),
+          tint = if (isInDarkTheme()) FileDark else FileLight
+        )
+      }
+      Text(
+        buildAnnotatedString {
+          withStyle(SpanStyle(fontSize = 12.sp, fontStyle = if (italic) FontStyle.Italic else FontStyle.Normal, color = HighOrLowlight)) {
+            append(caption)
+          }
+        },
+        style = MaterialTheme.typography.body1.copy(lineHeight = 22.sp),
       )
     }
   }
@@ -67,6 +106,10 @@ fun FramedItemView(
       Modifier
         .background(if (sent) SentQuoteColorLight else ReceivedQuoteColorLight)
         .fillMaxWidth()
+        .combinedClickable(
+          onLongClick = { showMenu.value = true },
+          onClick = { scrollToItem(qi.itemId?: return@combinedClickable) }
+        )
     ) {
       when (qi.content) {
         is MsgContent.MCImage -> {
@@ -81,13 +124,13 @@ fun FramedItemView(
             modifier = Modifier.size(68.dp).clipToBounds()
           )
         }
-        is MsgContent.MCFile -> {
+        is MsgContent.MCFile, is MsgContent.MCVoice -> {
           Box(Modifier.fillMaxWidth().weight(1f)) {
             ciQuotedMsgView(qi)
           }
           Icon(
-            Icons.Filled.InsertDriveFile,
-            stringResource(R.string.icon_descr_file),
+            if (qi.content is MsgContent.MCFile) Icons.Filled.InsertDriveFile else Icons.Filled.Mic,
+            if (qi.content is MsgContent.MCFile) stringResource(R.string.icon_descr_file) else stringResource(R.string.voice_message),
             Modifier
               .padding(top = 6.dp, end = 4.dp)
               .size(22.dp),
@@ -99,57 +142,81 @@ fun FramedItemView(
     }
   }
 
-  Surface(
-    shape = RoundedCornerShape(18.dp),
-    color = if (sent) SentColorLight else ReceivedColorLight
-  ) {
+  @Composable
+  fun ciFileView(ci: ChatItem, text: String) {
+    CIFileView(ci.file, ci.meta.itemEdited, receiveFile)
+    if (text != "" || ci.meta.isLive) {
+      CIMarkdownText(ci, chatTTL, showMember, linkMode = linkMode, uriHandler)
+    }
+  }
+
+  val transparentBackground = (ci.content.msgContent is MsgContent.MCImage) && !ci.meta.isLive && ci.content.text.isEmpty() && ci.quotedItem == null
+
+  Box(Modifier
+    .clip(RoundedCornerShape(18.dp))
+    .background(
+      when {
+        transparentBackground -> Color.Transparent
+        sent -> SentColorLight
+        else -> ReceivedColorLight
+      }
+    )) {
     var metaColor = HighOrLowlight
     Box(contentAlignment = Alignment.BottomEnd) {
       Column(Modifier.width(IntrinsicSize.Max)) {
-        val qi = ci.quotedItem
-        if (qi != null) {
-          ciQuoteView(qi)
-        }
-        if (ci.file == null && ci.formattedText == null && isShortEmoji(ci.content.text)) {
-          Box(Modifier.padding(vertical = 6.dp, horizontal = 12.dp)) {
-            Column(
-              Modifier
-                .padding(bottom = 2.dp)
-                .fillMaxWidth(),
-              horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-              EmojiText(ci.content.text)
-              Text("")
-            }
+        PriorityLayout(Modifier, CHAT_IMAGE_LAYOUT_ID) {
+          if (ci.meta.itemDeleted) {
+            FramedItemHeader(stringResource(R.string.marked_deleted_description), true, Icons.Outlined.Delete)
+          } else if (ci.meta.isLive) {
+            FramedItemHeader(stringResource(R.string.live), false)
           }
-        } else {
-          Column(Modifier.fillMaxWidth()) {
+          ci.quotedItem?.let { ciQuoteView(it) }
+          if (ci.file == null && ci.formattedText == null && !ci.meta.isLive && isShortEmoji(ci.content.text)) {
+            Box(Modifier.padding(vertical = 6.dp, horizontal = 12.dp)) {
+              Column(
+                Modifier
+                  .padding(bottom = 2.dp)
+                  .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+              ) {
+                EmojiText(ci.content.text)
+                Text("")
+              }
+            }
+          } else {
             when (val mc = ci.content.msgContent) {
               is MsgContent.MCImage -> {
-                CIImageView(image = mc.image, file = ci.file, showMenu, receiveFile)
-                if (mc.text == "") {
+                CIImageView(image = mc.image, file = ci.file, imageProvider ?: return@PriorityLayout, showMenu, receiveFile)
+                if (mc.text == "" && !ci.meta.isLive) {
                   metaColor = Color.White
                 } else {
-                  CIMarkdownText(ci, showMember, uriHandler)
+                  CIMarkdownText(ci, chatTTL, showMember, linkMode, uriHandler)
                 }
               }
-              is MsgContent.MCFile -> {
-                CIFileView(ci.file, ci.meta.itemEdited, receiveFile)
+              is MsgContent.MCVoice -> {
+                CIVoiceView(mc.duration, ci.file, ci.meta.itemEdited, ci.chatDir.sent, hasText = true, ci, timedMessagesTTL = chatTTL, longClick = { onLinkLongClick("") })
                 if (mc.text != "") {
-                  CIMarkdownText(ci, showMember, uriHandler)
+                  CIMarkdownText(ci, chatTTL, showMember, linkMode, uriHandler)
                 }
               }
+              is MsgContent.MCFile -> ciFileView(ci, mc.text)
+              is MsgContent.MCUnknown ->
+                if (ci.file == null) {
+                  CIMarkdownText(ci, chatTTL, showMember, linkMode, uriHandler, onLinkLongClick)
+                } else {
+                  ciFileView(ci, mc.text)
+                }
               is MsgContent.MCLink -> {
                 ChatItemLinkView(mc.preview)
-                CIMarkdownText(ci, showMember, uriHandler, onLinkLongClick)
+                CIMarkdownText(ci, chatTTL, showMember, linkMode, uriHandler, onLinkLongClick)
               }
-              else -> CIMarkdownText(ci, showMember, uriHandler, onLinkLongClick)
+              else -> CIMarkdownText(ci, chatTTL, showMember, linkMode, uriHandler, onLinkLongClick)
             }
           }
         }
       }
       Box(Modifier.padding(bottom = 6.dp, end = 12.dp)) {
-        CIMetaView(ci, metaColor)
+        CIMetaView(ci, chatTTL, metaColor)
       }
     }
   }
@@ -158,16 +225,57 @@ fun FramedItemView(
 @Composable
 fun CIMarkdownText(
   ci: ChatItem,
+  chatTTL: Int?,
   showMember: Boolean,
+  linkMode: SimplexLinkMode,
   uriHandler: UriHandler?,
   onLinkLongClick: (link: String) -> Unit = {}
 ) {
   Box(Modifier.padding(vertical = 6.dp, horizontal = 12.dp)) {
+    val text = if (ci.meta.isLive) ci.content.msgContent?.text ?: ci.text else ci.text
     MarkdownText(
-      ci.content.text, ci.formattedText, if (showMember) ci.memberDisplayName else null,
-      metaText = ci.timestampText, edited = ci.meta.itemEdited,
+      text, if (text.isEmpty()) emptyList() else ci.formattedText, if (showMember) ci.memberDisplayName else null,
+      meta = ci.meta, chatTTL = chatTTL, linkMode = linkMode,
       uriHandler = uriHandler, senderBold = true, onLinkLongClick = onLinkLongClick
     )
+  }
+}
+
+const val CHAT_IMAGE_LAYOUT_ID = "chatImage"
+const val MAX_SAFE_WIDTH_HEIGHT = 100_000
+
+@Composable
+fun PriorityLayout(
+  modifier: Modifier = Modifier,
+  priorityLayoutId: String,
+  content: @Composable () -> Unit
+) {
+  Layout(
+    content = content,
+    modifier = modifier
+  ) { measureable, constraints ->
+    // Find important element which should tell what max width other elements can use
+    // Expecting only one such element. Can be less than one but not more
+    val imagePlaceable = measureable.firstOrNull { it.layoutId == priorityLayoutId }?.measure(constraints)
+    val placeables: List<Placeable> = measureable.fastMap {
+      if (it.layoutId == priorityLayoutId)
+        imagePlaceable!!
+      else
+        it.measure(constraints.copy(maxWidth = imagePlaceable?.width ?: min(MAX_SAFE_WIDTH_HEIGHT, constraints.maxWidth))) }
+    /**
+     * Limit width for every other element to width of important element and height for a sum of all elements.
+     *
+     * min(MAX_SAFE_WIDTH_HEIGHT, ...) is here because of exception (related to width of long text):
+     * java.lang.IllegalArgumentException: Can't represent a size of 324314 in Constraints
+     * at androidx.compose.ui.unit.Constraints$Companion.bitsNeedForSize(Constraints.kt:403)
+     * */
+    layout(imagePlaceable?.measuredWidth ?: min(MAX_SAFE_WIDTH_HEIGHT, placeables.maxOf { it.width }), min(MAX_SAFE_WIDTH_HEIGHT, placeables.sumOf { it.height })) {
+      var y = 0
+      placeables.forEach {
+        it.place(0, y)
+        y += it.measuredHeight
+      }
+    }
   }
 }
 
@@ -185,6 +293,7 @@ fun PreviewTextItemViewSnd(@PreviewParameter(EditedProvider::class) edited: Bool
       ChatItem.getSampleData(
         1, CIDirection.DirectSnd(), Clock.System.now(), "hello", itemEdited = edited,
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -201,6 +310,7 @@ fun PreviewTextItemViewRcv(@PreviewParameter(EditedProvider::class) edited: Bool
       ChatItem.getSampleData(
         1, CIDirection.DirectRcv(), Clock.System.now(), "hello", itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -221,6 +331,7 @@ fun PreviewTextItemViewLong(@PreviewParameter(EditedProvider::class) edited: Boo
         "Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -242,6 +353,7 @@ fun PreviewTextItemViewQuote(@PreviewParameter(EditedProvider::class) edited: Bo
         quotedItem = CIQuote.getSample(1, Clock.System.now(), "hi", chatDir = CIDirection.DirectRcv()),
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -263,6 +375,7 @@ fun PreviewTextItemViewEmoji(@PreviewParameter(EditedProvider::class) edited: Bo
         quotedItem = CIQuote.getSample(1, Clock.System.now(), "Lorem ipsum dolor sit amet", chatDir = CIDirection.DirectRcv()),
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -291,6 +404,7 @@ fun PreviewQuoteWithTextAndImage(@PreviewParameter(EditedProvider::class) edited
         quotedItem = ciQuote,
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -319,6 +433,7 @@ fun PreviewQuoteWithLongTextAndImage(@PreviewParameter(EditedProvider::class) ed
         quotedItem = ciQuote,
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )
@@ -346,6 +461,7 @@ fun PreviewQuoteWithLongTextAndFile(@PreviewParameter(EditedProvider::class) edi
         quotedItem = ciQuote,
         itemEdited = edited
       ),
+      linkMode = SimplexLinkMode.DESCRIPTION,
       showMenu = showMenu,
       receiveFile = {}
     )

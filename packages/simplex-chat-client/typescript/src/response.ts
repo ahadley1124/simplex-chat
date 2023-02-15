@@ -266,7 +266,8 @@ export interface CRChatItemUpdated extends CR {
 export interface CRChatItemDeleted extends CR {
   type: "chatItemDeleted"
   deletedChatItem: AChatItem
-  toChatItem: AChatItem
+  toChatItem?: AChatItem
+  byUser: boolean
 }
 
 export interface CRMsgIntegrityError extends CR {
@@ -280,8 +281,7 @@ export interface CRCmdOk extends CR {
 
 export interface CRUserContactLink extends CR {
   type: "userContactLink"
-  connReqContact: string
-  autoAccept: boolean
+  contactLink: UserContactLink
 }
 
 export interface CRUserContactLinkUpdated extends CR {
@@ -388,6 +388,7 @@ export interface CRContactConnecting extends CR {
 export interface CRContactConnected extends CR {
   type: "contactConnected"
   contact: Contact
+  userCustomProfile?: Profile
 }
 
 export interface CRContactAnotherClient extends CR {
@@ -553,6 +554,7 @@ export interface CRGroupMembers extends CR {
 export interface CRUserAcceptedGroupSent extends CR {
   type: "userAcceptedGroupSent"
   groupInfo: GroupInfo
+  hostContact?: Contact // included when joining group via group link
 }
 
 export interface CRUserDeletedMember extends CR {
@@ -909,6 +911,16 @@ interface FileTransferMeta {
   fileSize: number
   chunkSize: number
   cancelled: boolean
+}
+
+interface UserContactLink {
+  connReqContact: string
+  autoAccept?: AutoAccept
+}
+
+interface AutoAccept {
+  acceptIncognito: boolean
+  autoReply?: MsgContent
 }
 
 export interface ChatStats {

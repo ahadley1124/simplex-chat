@@ -15,7 +15,8 @@ CREATE TABLE contact_profiles(
   image TEXT,
   user_id INTEGER DEFAULT NULL REFERENCES users ON DELETE CASCADE,
   incognito INTEGER,
-  local_alias TEXT DEFAULT '' CHECK(local_alias NOT NULL)
+  local_alias TEXT DEFAULT '' CHECK(local_alias NOT NULL),
+  preferences TEXT
 );
 CREATE INDEX contact_profiles_index ON contact_profiles(
   display_name,
@@ -28,7 +29,8 @@ CREATE TABLE users(
   local_display_name TEXT NOT NULL UNIQUE,
   active_user INTEGER NOT NULL DEFAULT 0,
   created_at TEXT CHECK(created_at NOT NULL),
-  updated_at TEXT CHECK(updated_at NOT NULL), -- 1 for active user
+  updated_at TEXT CHECK(updated_at NOT NULL),
+  agent_user_id INTEGER CHECK(agent_user_id NOT NULL), -- 1 for active user
   FOREIGN KEY(user_id, local_display_name)
   REFERENCES display_names(user_id, local_display_name)
   ON DELETE CASCADE
@@ -47,15 +49,19 @@ CREATE TABLE display_names(
 ) WITHOUT ROWID;
 CREATE TABLE contacts(
   contact_id INTEGER PRIMARY KEY,
-  contact_profile_id INTEGER REFERENCES contact_profiles ON DELETE SET NULL, -- NULL if it's an incognito profile
-user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
-local_display_name TEXT NOT NULL,
-is_user INTEGER NOT NULL DEFAULT 0, -- 1 if this contact is a user
+  contact_profile_id INTEGER REFERENCES contact_profiles ON DELETE SET NULL,
+  user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
+  local_display_name TEXT NOT NULL,
+  is_user INTEGER NOT NULL DEFAULT 0, -- 1 if this contact is a user
   via_group INTEGER REFERENCES groups(group_id) ON DELETE SET NULL,
   created_at TEXT NOT NULL DEFAULT(datetime('now')),
   updated_at TEXT CHECK(updated_at NOT NULL),
   xcontact_id BLOB,
   enable_ntfs INTEGER,
+  unread_chat INTEGER DEFAULT 0 CHECK(unread_chat NOT NULL),
+  contact_used INTEGER DEFAULT 0 CHECK(contact_used NOT NULL),
+  user_preferences TEXT DEFAULT '{}' CHECK(user_preferences NOT NULL),
+  chat_ts TEXT,
   FOREIGN KEY(user_id, local_display_name)
   REFERENCES display_names(user_id, local_display_name)
   ON DELETE CASCADE
@@ -111,7 +117,9 @@ CREATE TABLE group_profiles(
   created_at TEXT CHECK(created_at NOT NULL),
   updated_at TEXT CHECK(updated_at NOT NULL),
   image TEXT,
-  user_id INTEGER DEFAULT NULL REFERENCES users ON DELETE CASCADE
+  user_id INTEGER DEFAULT NULL REFERENCES users ON DELETE CASCADE,
+  preferences TEXT,
+  description TEXT NULL
 );
 CREATE TABLE groups(
   group_id INTEGER PRIMARY KEY, -- local group ID
@@ -123,7 +131,9 @@ CREATE TABLE groups(
   updated_at TEXT CHECK(updated_at NOT NULL),
   chat_item_id INTEGER DEFAULT NULL REFERENCES chat_items ON DELETE SET NULL,
   enable_ntfs INTEGER,
-  host_conn_custom_user_profile_id INTEGER REFERENCES contact_profiles ON DELETE SET NULL, -- received
+  host_conn_custom_user_profile_id INTEGER REFERENCES contact_profiles ON DELETE SET NULL,
+  unread_chat INTEGER DEFAULT 0 CHECK(unread_chat NOT NULL),
+  chat_ts TEXT, -- received
   FOREIGN KEY(user_id, local_display_name)
   REFERENCES display_names(user_id, local_display_name)
   ON DELETE CASCADE
@@ -182,7 +192,8 @@ CREATE TABLE files(
   chat_item_id INTEGER DEFAULT NULL REFERENCES chat_items ON DELETE CASCADE,
   updated_at TEXT CHECK(updated_at NOT NULL),
   cancelled INTEGER,
-  ci_file_status TEXT
+  ci_file_status TEXT,
+  file_inline TEXT
 );
 CREATE TABLE snd_files(
   file_id INTEGER NOT NULL REFERENCES files ON DELETE CASCADE,
@@ -191,6 +202,8 @@ CREATE TABLE snd_files(
   group_member_id INTEGER REFERENCES group_members ON DELETE CASCADE,
   created_at TEXT CHECK(created_at NOT NULL),
   updated_at TEXT CHECK(updated_at NOT NULL),
+  file_inline TEXT,
+  last_inline_msg_delivery_id INTEGER,
   PRIMARY KEY(file_id, connection_id)
 ) WITHOUT ROWID;
 CREATE TABLE rcv_files(
@@ -200,7 +213,9 @@ CREATE TABLE rcv_files(
   file_queue_info BLOB
   ,
   created_at TEXT CHECK(created_at NOT NULL),
-  updated_at TEXT CHECK(updated_at NOT NULL)
+  updated_at TEXT CHECK(updated_at NOT NULL),
+  rcv_file_inline TEXT,
+  file_inline TEXT
 );
 CREATE TABLE snd_file_chunks(
   file_id INTEGER NOT NULL,
@@ -245,6 +260,11 @@ CREATE TABLE connections(
   custom_user_profile_id INTEGER REFERENCES contact_profiles ON DELETE SET NULL,
   conn_req_inv BLOB,
   local_alias DEFAULT '' CHECK(local_alias NOT NULL),
+  via_group_link INTEGER DEFAULT 0 CHECK(via_group_link NOT NULL),
+  group_link_id BLOB,
+  security_code TEXT NULL,
+  security_code_verified_at TEXT NULL,
+  auth_err_counter INTEGER DEFAULT 0 CHECK(auth_err_counter NOT NULL),
   FOREIGN KEY(snd_file_id, connection_id)
   REFERENCES snd_files(file_id, connection_id)
   ON DELETE CASCADE
@@ -259,6 +279,9 @@ CREATE TABLE user_contact_links(
   updated_at TEXT CHECK(updated_at NOT NULL),
   auto_accept INTEGER DEFAULT 0,
   auto_reply_msg_content TEXT DEFAULT NULL,
+  group_id INTEGER REFERENCES groups ON DELETE CASCADE,
+  auto_accept_incognito INTEGER DEFAULT 0 CHECK(auto_accept_incognito NOT NULL),
+  group_link_id BLOB,
   UNIQUE(user_id, local_display_name)
 );
 CREATE TABLE contact_requests(
@@ -267,18 +290,20 @@ CREATE TABLE contact_requests(
   ON UPDATE CASCADE ON DELETE CASCADE,
   agent_invitation_id BLOB NOT NULL,
   contact_profile_id INTEGER REFERENCES contact_profiles
-  ON DELETE SET NULL -- NULL if it's an incognito profile
-DEFERRABLE INITIALLY DEFERRED,
-local_display_name TEXT NOT NULL,
-created_at TEXT NOT NULL DEFAULT(datetime('now')),
-user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE, updated_at TEXT CHECK(updated_at NOT NULL), xcontact_id BLOB,
-FOREIGN KEY(user_id, local_display_name)
-REFERENCES display_names(user_id, local_display_name)
-ON UPDATE CASCADE
-ON DELETE CASCADE
-DEFERRABLE INITIALLY DEFERRED,
-UNIQUE(user_id, local_display_name),
-UNIQUE(user_id, contact_profile_id)
+  ON DELETE SET NULL
+  DEFERRABLE INITIALLY DEFERRED,
+  local_display_name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT(datetime('now')),
+  user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
+  updated_at TEXT CHECK(updated_at NOT NULL),
+  xcontact_id BLOB,
+  FOREIGN KEY(user_id, local_display_name)
+  REFERENCES display_names(user_id, local_display_name)
+  ON UPDATE CASCADE
+  ON DELETE CASCADE
+  DEFERRABLE INITIALLY DEFERRED,
+  UNIQUE(user_id, local_display_name),
+  UNIQUE(user_id, contact_profile_id)
 );
 CREATE TABLE messages(
   message_id INTEGER PRIMARY KEY,
@@ -331,7 +356,7 @@ CREATE TABLE chat_items(
   created_by_msg_id INTEGER UNIQUE REFERENCES messages(message_id) ON DELETE SET NULL,
   item_sent INTEGER NOT NULL, -- 0 for received, 1 for sent
   item_ts TEXT NOT NULL, -- broker_ts of creating message for received, created_at for sent
-  item_deleted INTEGER NOT NULL DEFAULT 0, -- 1 for deleted,
+  item_deleted INTEGER NOT NULL DEFAULT 0, -- 1 for deleted
   item_content TEXT NOT NULL, -- JSON
   item_text TEXT NOT NULL, -- textual representation
   created_at TEXT NOT NULL DEFAULT(datetime('now')),
@@ -344,7 +369,10 @@ CREATE TABLE chat_items(
   quoted_content TEXT,
   quoted_sent INTEGER,
   quoted_member_id BLOB,
-  item_edited INTEGER
+  item_edited INTEGER,
+  timed_ttl INTEGER,
+  timed_delete_at TEXT,
+  item_live INTEGER
 );
 CREATE TABLE chat_item_messages(
   chat_item_id INTEGER NOT NULL REFERENCES chat_items ON DELETE CASCADE,
@@ -358,27 +386,7 @@ CREATE INDEX idx_connections_via_contact_uri_hash ON connections(
 );
 CREATE INDEX idx_contact_requests_xcontact_id ON contact_requests(xcontact_id);
 CREATE INDEX idx_contacts_xcontact_id ON contacts(xcontact_id);
-CREATE TABLE smp_servers(
-  smp_server_id INTEGER PRIMARY KEY,
-  host TEXT NOT NULL,
-  port TEXT NOT NULL,
-  key_hash BLOB NOT NULL,
-  user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
-  created_at TEXT NOT NULL DEFAULT(datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT(datetime('now')),
-  UNIQUE(host, port)
-);
 CREATE INDEX idx_messages_shared_msg_id ON messages(shared_msg_id);
-CREATE UNIQUE INDEX idx_messages_direct_shared_msg_id ON messages(
-  connection_id,
-  shared_msg_id_user,
-  shared_msg_id
-);
-CREATE UNIQUE INDEX idx_messages_group_shared_msg_id ON messages(
-  group_id,
-  shared_msg_id_user,
-  shared_msg_id
-);
 CREATE INDEX idx_chat_items_shared_msg_id ON chat_items(shared_msg_id);
 CREATE TABLE calls(
   -- stores call invitations state for communicating state between NSE and app when call notification comes
@@ -413,3 +421,128 @@ CREATE TABLE commands(
   updated_at TEXT NOT NULL DEFAULT(datetime('now'))
 );
 CREATE TABLE sqlite_sequence(name,seq);
+CREATE TABLE settings(
+  settings_id INTEGER PRIMARY KEY,
+  chat_item_ttl INTEGER,
+  user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT(datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT(datetime('now'))
+);
+CREATE UNIQUE INDEX idx_chat_items_direct_shared_msg_id ON chat_items(
+  user_id,
+  contact_id,
+  shared_msg_id
+);
+CREATE UNIQUE INDEX idx_chat_items_group_shared_msg_id ON chat_items(
+  user_id,
+  group_id,
+  group_member_id,
+  shared_msg_id
+);
+CREATE INDEX idx_msg_deliveries_message_id ON msg_deliveries(message_id);
+CREATE UNIQUE INDEX idx_user_contact_links_group_id ON user_contact_links(
+  group_id
+);
+CREATE UNIQUE INDEX idx_snd_files_last_inline_msg_delivery_id ON snd_files(
+  last_inline_msg_delivery_id
+);
+CREATE INDEX idx_messages_connection_id ON messages(connection_id);
+CREATE INDEX idx_chat_items_group_member_id ON chat_items(group_member_id);
+CREATE INDEX idx_chat_items_contact_id ON chat_items(contact_id);
+CREATE INDEX idx_chat_items_timed_delete_at ON chat_items(timed_delete_at);
+CREATE INDEX idx_chat_items_item_status ON chat_items(item_status);
+CREATE INDEX idx_connections_group_member ON connections(
+  user_id,
+  group_member_id
+);
+CREATE INDEX idx_commands_connection_id ON commands(connection_id);
+CREATE INDEX idx_calls_user_id ON calls(user_id);
+CREATE INDEX idx_calls_chat_item_id ON calls(chat_item_id);
+CREATE INDEX idx_calls_contact_id ON calls(contact_id);
+CREATE INDEX idx_commands_user_id ON commands(user_id);
+CREATE INDEX idx_connections_custom_user_profile_id ON connections(
+  custom_user_profile_id
+);
+CREATE INDEX idx_connections_via_user_contact_link ON connections(
+  via_user_contact_link
+);
+CREATE INDEX idx_connections_rcv_file_id ON connections(rcv_file_id);
+CREATE INDEX idx_connections_contact_id ON connections(contact_id);
+CREATE INDEX idx_connections_user_contact_link_id ON connections(
+  user_contact_link_id
+);
+CREATE INDEX idx_connections_via_contact ON connections(via_contact);
+CREATE INDEX idx_contact_profiles_user_id ON contact_profiles(user_id);
+CREATE INDEX idx_contact_requests_contact_profile_id ON contact_requests(
+  contact_profile_id
+);
+CREATE INDEX idx_contact_requests_user_contact_link_id ON contact_requests(
+  user_contact_link_id
+);
+CREATE INDEX idx_contacts_via_group ON contacts(via_group);
+CREATE INDEX idx_contacts_contact_profile_id ON contacts(contact_profile_id);
+CREATE INDEX idx_files_chat_item_id ON files(chat_item_id);
+CREATE INDEX idx_files_user_id ON files(user_id);
+CREATE INDEX idx_files_group_id ON files(group_id);
+CREATE INDEX idx_files_contact_id ON files(contact_id);
+CREATE INDEX idx_group_member_intros_to_group_member_id ON group_member_intros(
+  to_group_member_id
+);
+CREATE INDEX idx_group_members_user_id_local_display_name ON group_members(
+  user_id,
+  local_display_name
+);
+CREATE INDEX idx_group_members_member_profile_id ON group_members(
+  member_profile_id
+);
+CREATE INDEX idx_group_members_contact_id ON group_members(contact_id);
+CREATE INDEX idx_group_members_contact_profile_id ON group_members(
+  contact_profile_id
+);
+CREATE INDEX idx_group_members_user_id ON group_members(user_id);
+CREATE INDEX idx_group_members_invited_by ON group_members(invited_by);
+CREATE INDEX idx_group_profiles_user_id ON group_profiles(user_id);
+CREATE INDEX idx_groups_host_conn_custom_user_profile_id ON groups(
+  host_conn_custom_user_profile_id
+);
+CREATE INDEX idx_groups_chat_item_id ON groups(chat_item_id);
+CREATE INDEX idx_groups_group_profile_id ON groups(group_profile_id);
+CREATE INDEX idx_messages_group_id ON messages(group_id);
+CREATE INDEX idx_pending_group_messages_group_member_intro_id ON pending_group_messages(
+  group_member_intro_id
+);
+CREATE INDEX idx_pending_group_messages_message_id ON pending_group_messages(
+  message_id
+);
+CREATE INDEX idx_pending_group_messages_group_member_id ON pending_group_messages(
+  group_member_id
+);
+CREATE INDEX idx_rcv_file_chunks_file_id ON rcv_file_chunks(file_id);
+CREATE INDEX idx_rcv_files_group_member_id ON rcv_files(group_member_id);
+CREATE INDEX idx_received_probes_user_id ON received_probes(user_id);
+CREATE INDEX idx_received_probes_contact_id ON received_probes(contact_id);
+CREATE INDEX idx_sent_probe_hashes_user_id ON sent_probe_hashes(user_id);
+CREATE INDEX idx_sent_probe_hashes_contact_id ON sent_probe_hashes(contact_id);
+CREATE INDEX idx_settings_user_id ON settings(user_id);
+CREATE INDEX idx_snd_file_chunks_file_id_connection_id ON snd_file_chunks(
+  file_id,
+  connection_id
+);
+CREATE INDEX idx_snd_files_group_member_id ON snd_files(group_member_id);
+CREATE INDEX idx_snd_files_connection_id ON snd_files(connection_id);
+CREATE INDEX idx_snd_files_file_id ON snd_files(file_id);
+CREATE TABLE IF NOT EXISTS "smp_servers"(
+  smp_server_id INTEGER PRIMARY KEY,
+  host TEXT NOT NULL,
+  port TEXT NOT NULL,
+  key_hash BLOB NOT NULL,
+  basic_auth TEXT,
+  preset INTEGER NOT NULL DEFAULT 0,
+  tested INTEGER,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  user_id INTEGER NOT NULL REFERENCES users ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT(datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT(datetime('now')),
+  UNIQUE(user_id, host, port)
+);
+CREATE INDEX idx_smp_servers_user_id ON smp_servers(user_id);

@@ -9,14 +9,14 @@ import androidx.compose.material.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import chat.simplex.app.R
 import chat.simplex.app.model.*
 import chat.simplex.app.ui.theme.HighOrLowlight
-import chat.simplex.app.views.helpers.ExposedDropDownSettingRow
-import chat.simplex.app.views.helpers.generalGetString
+import chat.simplex.app.views.helpers.*
 
 @Composable
 fun CallSettingsView(m: ChatModel,
@@ -31,8 +31,8 @@ fun CallSettingsView(m: ChatModel,
 
 @Composable
 fun CallSettingsLayout(
-  webrtcPolicyRelay: Preference<Boolean>,
-  callOnLockScreen: Preference<CallOnLockScreen>,
+  webrtcPolicyRelay: SharedPreference<Boolean>,
+  callOnLockScreen: SharedPreference<CallOnLockScreen>,
   editIceServers: () -> Unit,
 ) {
   Column(
@@ -40,12 +40,8 @@ fun CallSettingsLayout(
     horizontalAlignment = Alignment.Start,
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
+    AppBarTitle(stringResource(R.string.your_calls))
     val lockCallState = remember { mutableStateOf(callOnLockScreen.get()) }
-    Text(
-      stringResource(R.string.your_calls),
-      Modifier.padding(start = 16.dp, bottom = 24.dp),
-      style = MaterialTheme.typography.h1
-    )
     SectionView(stringResource(R.string.settings_section_title_settings)) {
       SectionItemView() {
         SharedPreferenceToggle(stringResource(R.string.connect_calls_via_relay), webrtcPolicyRelay)
@@ -84,9 +80,10 @@ private fun LockscreenOpts(lockscreenOpts: State<CallOnLockScreen>, enabled: Sta
 @Composable
 fun SharedPreferenceToggle(
   text: String,
-  preference: Preference<Boolean>,
-  preferenceState: MutableState<Boolean>? = null
-) {
+  preference: SharedPreference<Boolean>,
+  preferenceState: MutableState<Boolean>? = null,
+  onChange: ((Boolean) -> Unit)? = null,
+  ) {
   val prefState = preferenceState ?: remember { mutableStateOf(preference.get()) }
   Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
     Text(text, Modifier.padding(end = 24.dp))
@@ -96,6 +93,7 @@ fun SharedPreferenceToggle(
       onCheckedChange = {
         preference.set(it)
         prefState.value = it
+        onChange?.invoke(it)
       },
       colors = SwitchDefaults.colors(
         checkedThumbColor = MaterialTheme.colors.primary,
@@ -111,12 +109,12 @@ fun SharedPreferenceToggleWithIcon(
   icon: ImageVector,
   stopped: Boolean = false,
   onClickInfo: () -> Unit,
-  preference: Preference<Boolean>,
+  preference: SharedPreference<Boolean>,
   preferenceState: MutableState<Boolean>? = null
 ) {
   val prefState = preferenceState ?: remember { mutableStateOf(preference.get()) }
   Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-    Text(text, Modifier.padding(end = 4.dp))
+    Text(text, Modifier.padding(end = 4.dp), color = if (stopped) HighOrLowlight else Color.Unspecified)
     Icon(
       icon,
       null,
@@ -140,7 +138,7 @@ fun SharedPreferenceToggleWithIcon(
 }
 
 @Composable
-fun <T>SharedPreferenceRadioButton(text: String, prefState: MutableState<T>, preference: Preference<T>, value: T) {
+fun <T>SharedPreferenceRadioButton(text: String, prefState: MutableState<T>, preference: SharedPreference<T>, value: T) {
   Row(verticalAlignment = Alignment.CenterVertically) {
     Text(text)
     val colors = RadioButtonDefaults.colors(selectedColor = MaterialTheme.colors.primary)

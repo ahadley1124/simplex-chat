@@ -24,18 +24,24 @@ import chat.simplex.app.views.helpers.*
 fun NetworkAndServersView(
   chatModel: ChatModel,
   showModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
-  showSettingsModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit)
+  showSettingsModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
 ) {
   // It's not a state, just a one-time value. Shouldn't be used in any state-related situations
   val netCfg = remember { chatModel.controller.getNetCfg() }
   val networkUseSocksProxy: MutableState<Boolean> = remember { mutableStateOf(netCfg.useSocksProxy) }
   val developerTools = chatModel.controller.appPrefs.developerTools.get()
   val onionHosts = remember { mutableStateOf(netCfg.onionHosts) }
+  val sessionMode = remember { mutableStateOf(netCfg.sessionMode) }
+
+  LaunchedEffect(Unit) {
+    chatModel.userSMPServersUnsaved.value = null
+  }
 
   NetworkAndServersLayout(
     developerTools = developerTools,
     networkUseSocksProxy = networkUseSocksProxy,
     onionHosts = onionHosts,
+    sessionMode = sessionMode,
     showModal = showModal,
     showSettingsModal = showSettingsModal,
     toggleSocksProxy = { enable ->
@@ -78,9 +84,13 @@ fun NetworkAndServersView(
         OnionHosts.PREFER -> generalGetString(R.string.network_use_onion_hosts_prefer_desc_in_alert)
         OnionHosts.REQUIRED -> generalGetString(R.string.network_use_onion_hosts_required_desc_in_alert)
       }
-      updateOnionHostsDialog(startsWith, onDismiss = {
-        onionHosts.value = prevValue
-      }) {
+      updateNetworkSettingsDialog(
+        title = generalGetString(R.string.update_onion_hosts_settings_question),
+        startsWith,
+        onDismiss = {
+          onionHosts.value = prevValue
+        }
+      ) {
         withApi {
           val newCfg = chatModel.controller.getNetCfg().withOnionHosts(it)
           val res = chatModel.controller.apiSetNetworkConfig(newCfg)
@@ -92,6 +102,31 @@ fun NetworkAndServersView(
           }
         }
       }
+    },
+    updateSessionMode = {
+      if (sessionMode.value == it) return@NetworkAndServersLayout
+      val prevValue = sessionMode.value
+      sessionMode.value = it
+      val startsWith = when (it) {
+        TransportSessionMode.User -> generalGetString(R.string.network_session_mode_user_description)
+        TransportSessionMode.Entity -> generalGetString(R.string.network_session_mode_entity_description)
+      }
+      updateNetworkSettingsDialog(
+        title = generalGetString(R.string.update_network_session_mode_question),
+        startsWith,
+        onDismiss = { sessionMode.value = prevValue }
+      ) {
+        withApi {
+          val newCfg = chatModel.controller.getNetCfg().copy(sessionMode = it)
+          val res = chatModel.controller.apiSetNetworkConfig(newCfg)
+          if (res) {
+            chatModel.controller.setNetCfg(newCfg)
+            sessionMode.value = it
+          } else {
+            sessionMode.value = prevValue
+          }
+        }
+      }
     }
   )
 }
@@ -100,33 +135,33 @@ fun NetworkAndServersView(
   developerTools: Boolean,
   networkUseSocksProxy: MutableState<Boolean>,
   onionHosts: MutableState<OnionHosts>,
+  sessionMode: MutableState<TransportSessionMode>,
   showModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
   showSettingsModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
   toggleSocksProxy: (Boolean) -> Unit,
   useOnion: (OnionHosts) -> Unit,
+  updateSessionMode: (TransportSessionMode) -> Unit,
 ) {
   Column(
     Modifier.fillMaxWidth(),
     horizontalAlignment = Alignment.Start,
     verticalArrangement = Arrangement.spacedBy(8.dp)
   ) {
-    Text(
-      stringResource(R.string.network_and_servers),
-      Modifier.padding(start = 16.dp, bottom = 24.dp),
-      style = MaterialTheme.typography.h1
-    )
+    AppBarTitle(stringResource(R.string.network_and_servers))
     SectionView(generalGetString(R.string.settings_section_title_messages)) {
-      SettingsActionItem(Icons.Outlined.Dns, stringResource(R.string.smp_servers), showModal { SMPServersView(it) })
+      SettingsActionItem(Icons.Outlined.Dns, stringResource(R.string.smp_servers), showSettingsModal { SMPServersView(it) })
       SectionDivider()
       SectionItemView {
         UseSocksProxySwitch(networkUseSocksProxy, toggleSocksProxy)
       }
       SectionDivider()
       UseOnionHosts(onionHosts, networkUseSocksProxy, showSettingsModal, useOnion)
+      SectionDivider()
       if (developerTools) {
+        SessionModePicker(sessionMode, showSettingsModal, updateSessionMode)
         SectionDivider()
-        SettingsActionItem(Icons.Outlined.Cable, stringResource(R.string.network_settings), showSettingsModal { AdvancedNetworkSettingsView(it) })
       }
+      SettingsActionItem(Icons.Outlined.Cable, stringResource(R.string.network_settings), showSettingsModal { AdvancedNetworkSettingsView(it) })
     }
     Spacer(Modifier.height(8.dp))
     SectionView(generalGetString(R.string.settings_section_title_calls)) {
@@ -172,7 +207,7 @@ fun UseSocksProxySwitch(
 private fun UseOnionHosts(
   onionHosts: MutableState<OnionHosts>,
   enabled: State<Boolean>,
-  showSettingsModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
+  showModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
   useOnion: (OnionHosts) -> Unit,
 ) {
   val values = remember {
@@ -184,16 +219,12 @@ private fun UseOnionHosts(
       }
     }
   }
-  val onSelected = showSettingsModal {
+  val onSelected = showModal {
     Column(
       Modifier.fillMaxWidth(),
       horizontalAlignment = Alignment.Start,
     ) {
-      Text(
-        stringResource(R.string.network_use_onion_hosts),
-        Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
-        style = MaterialTheme.typography.h1
-      )
+      AppBarTitle(stringResource(R.string.network_use_onion_hosts))
       SectionViewSelectable(null, onionHosts, values, useOnion)
     }
   }
@@ -208,14 +239,47 @@ private fun UseOnionHosts(
   )
 }
 
-private fun updateOnionHostsDialog(
+@Composable
+private fun SessionModePicker(
+  sessionMode: MutableState<TransportSessionMode>,
+  showModal: (@Composable (ChatModel) -> Unit) -> (() -> Unit),
+  updateSessionMode: (TransportSessionMode) -> Unit,
+) {
+  val values = remember {
+    TransportSessionMode.values().map {
+      when (it) {
+        TransportSessionMode.User -> ValueTitleDesc(TransportSessionMode.User, generalGetString(R.string.network_session_mode_user), generalGetString(R.string.network_session_mode_user_description))
+        TransportSessionMode.Entity -> ValueTitleDesc(TransportSessionMode.Entity, generalGetString(R.string.network_session_mode_entity), generalGetString(R.string.network_session_mode_entity_description))
+      }
+    }
+  }
+
+  SectionItemWithValue(
+    generalGetString(R.string.network_session_mode_transport_isolation),
+    sessionMode,
+    values,
+    icon = Icons.Outlined.SafetyDivider,
+    onSelected = showModal {
+      Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.Start,
+      ) {
+        AppBarTitle(stringResource(R.string.network_session_mode_transport_isolation))
+        SectionViewSelectable(null, sessionMode, values, updateSessionMode)
+      }
+    }
+  )
+}
+
+private fun updateNetworkSettingsDialog(
+  title: String,
   startsWith: String = "",
   message: String = generalGetString(R.string.updating_settings_will_reconnect_client_to_all_servers),
   onDismiss: () -> Unit,
   onConfirm: () -> Unit
 ) {
   AlertManager.shared.showAlertDialog(
-    title = generalGetString(R.string.update_onion_hosts_settings_question),
+    title = title,
     text = startsWith + "\n\n" + message,
     confirmText = generalGetString(R.string.update_network_settings_confirmation),
     onDismiss = onDismiss,
@@ -235,7 +299,9 @@ fun PreviewNetworkAndServersLayout() {
       showSettingsModal = { {} },
       toggleSocksProxy = {},
       onionHosts = remember { mutableStateOf(OnionHosts.PREFER) },
+      sessionMode = remember { mutableStateOf(TransportSessionMode.User) },
       useOnion = {},
+      updateSessionMode = {},
     )
   }
 }

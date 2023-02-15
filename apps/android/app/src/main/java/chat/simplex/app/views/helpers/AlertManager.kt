@@ -1,27 +1,31 @@
 package chat.simplex.app.views.helpers
 
 import android.util.Log
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.*
+import androidx.compose.ui.window.Dialog
 import chat.simplex.app.R
 import chat.simplex.app.TAG
+import chat.simplex.app.ui.theme.*
 
 class AlertManager {
-  var alertView = mutableStateOf<(@Composable () -> Unit)?>(null)
-  var presentAlert = mutableStateOf<Boolean>(false)
+  var alertViews = mutableStateListOf<(@Composable () -> Unit)>()
 
   fun showAlert(alert: @Composable () -> Unit) {
     Log.d(TAG, "AlertManager.showAlert")
-    alertView.value = alert
-    presentAlert.value = true
+    alertViews.add(alert)
   }
 
   fun hideAlert() {
-    presentAlert.value = false
-    alertView.value = null
+    alertViews.removeLastOrNull()
   }
 
   fun showAlertDialogButtons(
@@ -37,6 +41,36 @@ class AlertManager {
         text = alertText,
         buttons = buttons
       )
+    }
+  }
+
+  fun showAlertDialogButtonsColumn(
+    title: String,
+    text: AnnotatedString? = null,
+    buttons: @Composable () -> Unit,
+  ) {
+    showAlert {
+      Dialog(onDismissRequest = this::hideAlert) {
+        Column(Modifier.background(MaterialTheme.colors.background, MaterialTheme.shapes.medium)) {
+          Text(title,
+            Modifier.padding(start = DEFAULT_PADDING, end = DEFAULT_PADDING, top = DEFAULT_PADDING, bottom = if (text == null) DEFAULT_PADDING else DEFAULT_PADDING_HALF),
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold
+          )
+          if (text != null) {
+            CompositionLocalProvider(LocalContentAlpha provides ContentAlpha.high) {
+              Text(
+                text,
+                Modifier.padding(start = DEFAULT_PADDING, end = DEFAULT_PADDING, bottom = DEFAULT_PADDING),
+                fontSize = 14.sp,
+              )
+            }
+          }
+          CompositionLocalProvider(LocalContentAlpha provides ContentAlpha.high) {
+            buttons()
+          }
+        }
+      }
     }
   }
 
@@ -72,6 +106,41 @@ class AlertManager {
     }
   }
 
+  fun showAlertDialogStacked(
+    title: String,
+    text: String? = null,
+    confirmText: String = generalGetString(R.string.ok),
+    onConfirm: (() -> Unit)? = null,
+    dismissText: String = generalGetString(R.string.cancel_verb),
+    onDismiss: (() -> Unit)? = null,
+    onDismissRequest: (() -> Unit)? = null,
+    destructive: Boolean = false
+  ) {
+    val alertText: (@Composable () -> Unit)? = if (text == null) null else { -> Text(text) }
+    showAlert {
+      AlertDialog(
+        onDismissRequest = { onDismissRequest?.invoke(); hideAlert() },
+        title = { Text(title) },
+        text = alertText,
+        buttons = {
+          Column(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp).padding(top = 16.dp, bottom = 2.dp),
+            horizontalAlignment = Alignment.End
+          ) {
+            TextButton(onClick = {
+              onDismiss?.invoke()
+              hideAlert()
+            }) { Text(dismissText) }
+            TextButton(onClick = {
+              onConfirm?.invoke()
+              hideAlert()
+            }) { Text(confirmText, color = if (destructive) MaterialTheme.colors.error else Color.Unspecified) }
+          }
+        },
+      )
+    }
+  }
+
   fun showAlertMsg(
     title: String, text: String? = null,
     confirmText: String = generalGetString(R.string.ok), onConfirm: (() -> Unit)? = null
@@ -92,9 +161,16 @@ class AlertManager {
     }
   }
 
+  fun showAlertMsg(
+    title: Int,
+    text: Int? = null,
+    confirmText: Int = R.string.ok,
+    onConfirm: (() -> Unit)? = null
+  ) = showAlertMsg(generalGetString(title), if (text != null) generalGetString(text) else null, generalGetString(confirmText), onConfirm)
+
   @Composable
   fun showInView() {
-    if (presentAlert.value) alertView.value?.invoke()
+    remember { alertViews }.lastOrNull()?.invoke()
   }
 
   companion object {

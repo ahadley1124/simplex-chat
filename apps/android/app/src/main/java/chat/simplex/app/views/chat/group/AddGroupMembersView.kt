@@ -14,7 +14,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.TheaterComedy
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -29,19 +28,28 @@ import chat.simplex.app.model.*
 import chat.simplex.app.ui.theme.*
 import chat.simplex.app.views.chat.ChatInfoToolbarTitle
 import chat.simplex.app.views.helpers.*
+import chat.simplex.app.views.usersettings.SettingsActionItem
 
 @Composable
-fun AddGroupMembersView(groupInfo: GroupInfo, chatModel: ChatModel, close: () -> Unit) {
+fun AddGroupMembersView(groupInfo: GroupInfo, creatingGroup: Boolean = false, chatModel: ChatModel, close: () -> Unit) {
   val selectedContacts = remember { mutableStateListOf<Long>() }
-  val selectedRole = remember { mutableStateOf(GroupMemberRole.Admin) }
-
+  val selectedRole = remember { mutableStateOf(GroupMemberRole.Member) }
+  var allowModifyMembers by remember { mutableStateOf(true) }
   BackHandler(onBack = close)
   AddGroupMembersLayout(
     groupInfo = groupInfo,
+    creatingGroup = creatingGroup,
     contactsToAdd = getContactsToAdd(chatModel),
     selectedContacts = selectedContacts,
     selectedRole = selectedRole,
+    allowModifyMembers = allowModifyMembers,
+    openPreferences = {
+      ModalManager.shared.showCustomModal { close ->
+        GroupPreferencesView(chatModel, groupInfo.id, close)
+      }
+    },
     inviteMembers = {
+      allowModifyMembers = false
       withApi {
         for (contactId in selectedContacts) {
           val member = chatModel.controller.apiAddMember(groupInfo.groupId, contactId, selectedRole.value)
@@ -57,6 +65,7 @@ fun AddGroupMembersView(groupInfo: GroupInfo, chatModel: ChatModel, close: () ->
     clearSelection = { selectedContacts.clear() },
     addContact = { contactId -> if (contactId !in selectedContacts) selectedContacts.add(contactId) },
     removeContact = { contactId -> selectedContacts.removeIf { it == contactId } },
+    close = close,
   )
 }
 
@@ -77,13 +86,17 @@ fun getContactsToAdd(chatModel: ChatModel): List<Contact> {
 @Composable
 fun AddGroupMembersLayout(
   groupInfo: GroupInfo,
+  creatingGroup: Boolean,
   contactsToAdd: List<Contact>,
-  selectedContacts: SnapshotStateList<Long>,
+  selectedContacts: List<Long>,
   selectedRole: MutableState<GroupMemberRole>,
+  allowModifyMembers: Boolean,
+  openPreferences: () -> Unit,
   inviteMembers: () -> Unit,
   clearSelection: () -> Unit,
   addContact: (Long) -> Unit,
   removeContact: (Long) -> Unit,
+  close: () -> Unit,
 ) {
   Column(
     Modifier
@@ -91,6 +104,7 @@ fun AddGroupMembersLayout(
       .verticalScroll(rememberScrollState()),
     horizontalAlignment = Alignment.Start,
   ) {
+    AppBarTitle(stringResource(R.string.button_add_members))
     Row(
       Modifier.fillMaxWidth(),
       horizontalArrangement = Arrangement.Center
@@ -116,21 +130,29 @@ fun AddGroupMembersLayout(
       }
     } else {
       SectionView {
+        if (creatingGroup) {
+          SectionItemView(openPreferences) {
+            Text(stringResource(R.string.set_group_preferences))
+          }
+          SectionDivider()
+        }
         SectionItemView {
-          RoleSelectionRow(groupInfo, selectedRole)
+          RoleSelectionRow(groupInfo, selectedRole, allowModifyMembers)
         }
         SectionDivider()
-        SectionItemView {
-          InviteMembersButton(inviteMembers, disabled = selectedContacts.isEmpty())
+        if (creatingGroup && selectedContacts.isEmpty()) {
+          SkipInvitingButton(close)
+        } else {
+          InviteMembersButton(inviteMembers, disabled = selectedContacts.isEmpty() || !allowModifyMembers)
         }
       }
       SectionCustomFooter {
-        InviteSectionFooter(selectedContactsCount = selectedContacts.count(), clearSelection)
+        InviteSectionFooter(selectedContactsCount = selectedContacts.size, allowModifyMembers, clearSelection)
       }
       SectionSpacer()
 
-      SectionView {
-        ContactList(contacts = contactsToAdd, selectedContacts, groupInfo, addContact, removeContact)
+      SectionView(stringResource(R.string.select_contacts)) {
+        ContactList(contacts = contactsToAdd, selectedContacts, groupInfo, allowModifyMembers, addContact, removeContact)
       }
       SectionSpacer()
     }
@@ -138,114 +160,69 @@ fun AddGroupMembersLayout(
 }
 
 @Composable
-fun RoleSelectionRow(groupInfo: GroupInfo, selectedRole: MutableState<GroupMemberRole>) {
+private fun RoleSelectionRow(groupInfo: GroupInfo, selectedRole: MutableState<GroupMemberRole>, enabled: Boolean) {
   Row(
     Modifier.fillMaxWidth(),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.SpaceBetween
   ) {
-    Text(stringResource(R.string.new_member_role))
-    RoleDropdownMenu(groupInfo, selectedRole)
-  }
-}
-
-@Composable
-fun RoleDropdownMenu(groupInfo: GroupInfo, selectedRole: MutableState<GroupMemberRole>) {
-  val options = GroupMemberRole.values()
-    .filter { it <= groupInfo.membership.memberRole }
-  var expanded by remember { mutableStateOf(false) }
-
-  ExposedDropdownMenuBox(
-    expanded = expanded,
-    onExpandedChange = {
-      expanded = !expanded
-    }
-  ) {
-    Row(
-      Modifier.fillMaxWidth(0.7f),
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.End
-    ) {
-      Text(
-        selectedRole.value.text,
-        maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
-        color = HighOrLowlight
-      )
-      Spacer(Modifier.size(4.dp))
-      Icon(
-        if (!expanded) Icons.Outlined.ExpandMore else Icons.Outlined.ExpandLess,
-        generalGetString(R.string.invite_to_group_button),
-        modifier = Modifier.padding(start = 8.dp),
-        tint = HighOrLowlight
-      )
-    }
-    ExposedDropdownMenu(
-      expanded = expanded,
-      onDismissRequest = {
-        expanded = false
-      }
-    ) {
-      options.forEach { selectionOption ->
-        DropdownMenuItem(
-          onClick = {
-            selectedRole.value = selectionOption
-            expanded = false
-          }
-        ) {
-          Text(
-            selectionOption.text,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-          )
-        }
-      }
-    }
-  }
-}
-
-@Composable
-fun InviteMembersButton(inviteMembers: () -> Unit, disabled: Boolean) {
-  val modifier = if (disabled) Modifier else Modifier.clickable { inviteMembers() }
-  Row(
-    modifier.fillMaxSize(),
-    horizontalArrangement = Arrangement.End,
-    verticalAlignment = Alignment.CenterVertically
-  ) {
-    val color = if (disabled) HighOrLowlight else MaterialTheme.colors.primary
-    Text(stringResource(R.string.invite_to_group_button), color = color)
-    Spacer(Modifier.size(8.dp))
-    Icon(
-      Icons.Outlined.Check,
-      stringResource(R.string.invite_to_group_button),
-      tint = color
+    val values = GroupMemberRole.values().filter { it <= groupInfo.membership.memberRole }.map { it to it.text }
+    ExposedDropDownSettingRow(
+      generalGetString(R.string.new_member_role),
+      values,
+      selectedRole,
+      icon = null,
+      enabled = rememberUpdatedState(enabled),
+      onSelected = { selectedRole.value = it }
     )
   }
 }
 
 @Composable
-fun InviteSectionFooter(selectedContactsCount: Int, clearSelection: () -> Unit) {
+fun InviteMembersButton(onClick: () -> Unit, disabled: Boolean) {
+  SettingsActionItem(
+    Icons.Outlined.Check,
+    stringResource(R.string.invite_to_group_button),
+    click = onClick,
+    textColor = MaterialTheme.colors.primary,
+    iconColor = MaterialTheme.colors.primary,
+    disabled = disabled,
+  )
+}
+
+@Composable
+fun SkipInvitingButton(onClick: () -> Unit) {
+  SettingsActionItem(
+    Icons.Outlined.Check,
+    stringResource(R.string.skip_inviting_button),
+    click = onClick,
+    textColor = MaterialTheme.colors.primary,
+    iconColor = MaterialTheme.colors.primary,
+  )
+}
+
+@Composable
+fun InviteSectionFooter(selectedContactsCount: Int, enabled: Boolean, clearSelection: () -> Unit) {
   Row(
     Modifier.fillMaxWidth(),
-    horizontalArrangement = if (selectedContactsCount >= 1) Arrangement.SpaceBetween else Arrangement.End,
+    horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically
   ) {
     if (selectedContactsCount >= 1) {
-      Box(
-        Modifier.clickable { clearSelection() }
-      ) {
-        Text(
-          stringResource(R.string.clear_contacts_selection_button),
-          color = MaterialTheme.colors.primary,
-          fontSize = 12.sp
-        )
-      }
-
       Text(
         String.format(generalGetString(R.string.num_contacts_selected), selectedContactsCount),
         color = HighOrLowlight,
         fontSize = 12.sp
       )
+      Box(
+        Modifier.clickable { if (enabled) clearSelection() }
+      ) {
+        Text(
+          stringResource(R.string.clear_contacts_selection_button),
+          color = if (enabled) MaterialTheme.colors.primary else HighOrLowlight,
+          fontSize = 12.sp
+        )
+      }
     } else {
       Text(
         stringResource(R.string.no_contacts_selected),
@@ -259,19 +236,19 @@ fun InviteSectionFooter(selectedContactsCount: Int, clearSelection: () -> Unit) 
 @Composable
 fun ContactList(
   contacts: List<Contact>,
-  selectedContacts: SnapshotStateList<Long>,
+  selectedContacts: List<Long>,
   groupInfo: GroupInfo,
+  enabled: Boolean,
   addContact: (Long) -> Unit,
   removeContact: (Long) -> Unit
 ) {
   Column {
     contacts.forEachIndexed { index, contact ->
-      SectionItemView {
-        ContactCheckRow(
-          contact, groupInfo, addContact, removeContact,
-          checked = selectedContacts.contains(contact.apiId)
-        )
-      }
+      ContactCheckRow(
+        contact, groupInfo, addContact, removeContact,
+        checked = selectedContacts.contains(contact.apiId),
+        enabled = enabled,
+      )
       if (index < contacts.lastIndex) {
         SectionDivider()
       }
@@ -285,7 +262,8 @@ fun ContactCheckRow(
   groupInfo: GroupInfo,
   addContact: (Long) -> Unit,
   removeContact: (Long) -> Unit,
-  checked: Boolean
+  checked: Boolean,
+  enabled: Boolean,
 ) {
   val prohibitedToInviteIncognito = !groupInfo.membership.memberIncognito && contact.contactConnIncognito
   val icon: ImageVector
@@ -295,35 +273,30 @@ fun ContactCheckRow(
     iconColor = HighOrLowlight
   } else if (checked) {
     icon = Icons.Filled.CheckCircle
-    iconColor = MaterialTheme.colors.primary
+    iconColor = if (enabled) MaterialTheme.colors.primary else HighOrLowlight
   } else {
     icon = Icons.Outlined.Circle
     iconColor = HighOrLowlight
   }
-  Row(
-    Modifier
-      .fillMaxSize()
-      .clickable {
+  SectionItemView(
+    click = if (enabled) {
+      {
         if (prohibitedToInviteIncognito) {
           showProhibitedToInviteIncognitoAlertDialog()
         } else if (!checked)
           addContact(contact.apiId)
         else
           removeContact(contact.apiId)
-      },
-    horizontalArrangement = Arrangement.SpaceBetween,
-    verticalAlignment = Alignment.CenterVertically
+      }
+    } else null
   ) {
-    Row(
-      verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-      ProfileImage(size = 36.dp, contact.image)
-      Text(
-        contact.chatViewName, maxLines = 1, overflow = TextOverflow.Ellipsis,
-        color = if (prohibitedToInviteIncognito) HighOrLowlight else Color.Unspecified
-      )
-    }
+    ProfileImage(size = 36.dp, contact.image)
+    Spacer(Modifier.width(DEFAULT_SPACE_AFTER_ICON))
+    Text(
+      contact.chatViewName, maxLines = 1, overflow = TextOverflow.Ellipsis,
+      color = if (prohibitedToInviteIncognito) HighOrLowlight else Color.Unspecified
+    )
+    Spacer(Modifier.fillMaxWidth().weight(1f))
     Icon(
       icon,
       contentDescription = stringResource(R.string.icon_descr_contact_checked),
@@ -346,13 +319,17 @@ fun PreviewAddGroupMembersLayout() {
   SimpleXTheme {
     AddGroupMembersLayout(
       groupInfo = GroupInfo.sampleData,
+      creatingGroup = false,
       contactsToAdd = listOf(Contact.sampleData, Contact.sampleData, Contact.sampleData),
       selectedContacts = remember { mutableStateListOf() },
       selectedRole = remember { mutableStateOf(GroupMemberRole.Admin) },
+      allowModifyMembers = true,
+      openPreferences = {},
       inviteMembers = {},
       clearSelection = {},
       addContact = {},
-      removeContact = {}
+      removeContact = {},
+      close = {},
     )
   }
 }

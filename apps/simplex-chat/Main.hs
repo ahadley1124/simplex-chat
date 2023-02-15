@@ -3,8 +3,9 @@
 module Main where
 
 import Control.Concurrent (threadDelay)
+import Data.Time.Clock (getCurrentTime)
 import Server
-import Simplex.Chat.Controller (versionNumber)
+import Simplex.Chat.Controller (versionNumber, versionString)
 import Simplex.Chat.Core
 import Simplex.Chat.Options
 import Simplex.Chat.Terminal
@@ -25,16 +26,17 @@ main = do
         welcome opts
         t <- withTerminal pure
         simplexChatTerminal terminalChatConfig opts t
-    else simplexChatCore terminalChatConfig opts Nothing $ \_ cc -> do
+    else simplexChatCore terminalChatConfig opts Nothing $ \user cc -> do
       r <- sendChatCmd cc chatCmd
-      putStrLn $ serializeChatResponse r
+      ts <- getCurrentTime
+      putStrLn $ serializeChatResponse (Just user) ts r
       threadDelay $ chatCmdDelay opts * 1000000
 
 welcome :: ChatOpts -> IO ()
 welcome ChatOpts {dbFilePrefix, networkConfig} =
   mapM_
     putStrLn
-    [ "SimpleX Chat v" ++ versionNumber,
+    [ versionString versionNumber,
       "db: " <> dbFilePrefix <> "_chat.db, " <> dbFilePrefix <> "_agent.db",
       maybe
         "direct network connection - use `/network` command or `-x` CLI option to connect via SOCKS5 at :9050"
