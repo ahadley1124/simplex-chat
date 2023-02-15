@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SimpleX blog: Security assessment by Trail of Bits, the new website and v4.2 released</title>
+    <meta name="Content-Type" content="text/html;charset=utf-8" />
+    <meta http-equiv="onion-location" content="http://isdb4l77sjqoy2qq7ipum6x3at6hyn3jmxfx4zdhc72ufbmuq4ilwkqd.onion/blog/20221108-simplex-chat-v4.2-security-audit-new-website.html" />
+    <meta property="og:url" content="https://simplex.chat/blog/20221108-simplex-chat-v4.2-security-audit-new-website.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:title" content="Security assessment by Trail of Bits, the new website and v4.2 released" />
+    
+      <meta property="og:image" content="https://simplex.chat/blog/images/20221108-trail-of-bits.jpg" />
+    
+    <meta name="twitter:card" content="summary" />
+    <link rel="icon" type="image/png" sizes="96x96" href="/img/favicon.ico" />
+    <link href="/css/tailwind.css" rel="stylesheet" />
+    <link rel="stylesheet" href="/css/blog.css" />
+    <link href="/css/style.css" rel="stylesheet" />
+    <script async defer src="https://buttons.github.io/buttons.js"></script>
+  </head>
+
+  <body class="bg-[#F3F6F7] dark:bg-[#0C0B13]">
+    <header class="">
+    <div class="flex items-center justify-end m-auto px-4 lg:px-7 h-[66px]">
+        <a href="/" class="h-full hidden dark:hidden lg:flex items-center mr-auto"><img class="w-auto h-[50px]" src="/img/new/logo-light.png" alt="logo" /></a>
+        <a href="/" class="h-full hidden dark:lg:flex items-center mr-auto"><img class="w-auto h-[50px]" src="/img/new/logo-dark.png" alt="logo" /></a>
+        <a href="/" class="dark:hidden lg:hidden mr-auto"><img class="h-[32px]" src="/img/new/logo-symbol-light.svg" alt="" srcset=""></a>
+        <a href="/" class="hidden dark:inline-block dark:lg:hidden lg:hidden mr-auto"><img class="h-[32px]" src="/img/new/logo-symbol-dark.svg" alt="" srcset=""></a>
+        
+        <nav class="bg-[#F0F1F2] dark:bg-gradient-radial-mobile dark:lg:bg-none lg:bg-transparent fixed top-[66px] left-0 right-0 bottom-0 lg:top-0 lg:relative" id="menu">
+            <div class="flex flex-col lg:flex-row justify-between lg:items-center gap-10 px-4 lg:px-7 h-full">
+                <ul class="flex flex-col lg:flex-row lg:items-center gap-3 py-4 lg:py-0 lg:gap-10">
+                    
+                    <li class="nav-link relative ">
+                        <a href="/" class="flex items-center justify-between gap-2 lg:py-5 ">
+                            <span class="text-[16px] leading-[26px] tracking-[0.01em] nav-link-text text-black dark:text-white before:bg-black dark:before:bg-white">Home</span>
+                        </a>                        
+                    </li>
+
+                    <hr class="dark:opacity-[0.1]" >
+
+                    <li class="nav-link relative">
+                        <a href="javascript:void(0);" class="flex items-center justify-between gap-2 lg:py-5">
+                            <span class="text-[16px] leading-[26px] tracking-[0.01em] text-black dark:text-white before:bg-black dark:before:bg-white">Developers</span>
+                            <span href="" id="btn-mobile" class="flex items-center justify-center h-[36px] w-[36px] lg:h-auto lg:w-auto mt-1">
+                                <svg class="fill-black dark:fill-white" width="10" height="6" viewBox="0 0 10 6" xmlns="http://www.w3.org/2000/svg">
+                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M1.50447 0.902966C1.21571 0.627397 0.747525 0.627397 0.458761 0.902966C0.169996 1.17853 0.169996 1.62532 0.458761 1.90089L4.21933 5.48961C4.25543 5.52406 4.29433 5.5542 4.33533 5.58003C4.62234 5.76088 5.01237 5.73074 5.26504 5.48961L9.02561 1.90089C9.31438 1.62532 9.31438 1.17853 9.02561 0.902966C8.73685 0.627397 8.26867 0.627397 7.97991 0.902966L4.74219 3.99273L1.50447 0.902966Z"/>
+                                </svg>
+                            </span>
+                        </a>
+                        
+                        <ul class="flex flex-col items-start gap-2 lg:h-fit lg:absolute lg:bg-white dark:lg:bg-black top-full lg:mt-[10px] lg:py-4 min-w-[180px] rounded-md lg:shadow-[0_0_3px_rgb(60_72_88_/_15%)] sub-menu">
+                            <li><a href="https://github.com/simplex-chat/simplex-chat/blob/stable/apps/simplex-bot-advanced/Main.hs"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >Chat bot example</a></li>
+                            <li><a href="https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >TypeScript SDK</a></li>
+                            <li><a href="https://github.com/simplex-chat/simplex-chat/blob/stable/docs/CLI.md"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >Terminal CLI</a></li>
+                            <li><a href="https://github.com/simplex-chat/simplexmq"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >SimpleXMQ</a></li>
+                            </ul>
+                    </li>
+
+                    <hr class="dark:opacity-[0.1]" >
+
+                    <li class="nav-link relative">
+                        <a href="javascript:void(0);" class="flex items-center justify-between gap-2 lg:py-5">
+                            <span class="text-[16px] leading-[26px] tracking-[0.01em] text-black dark:text-white before:bg-black dark:before:bg-white">Reference</span>
+                            <span href="" id="btn-mobile" class="flex items-center justify-center h-[36px] w-[36px] lg:h-auto lg:w-auto mt-1">
+                                <svg class="fill-black dark:fill-white" width="10" height="6" viewBox="0 0 10 6" xmlns="http://www.w3.org/2000/svg">
+                                    <path fill-rule="evenodd" clip-rule="evenodd" d="M1.50447 0.902966C1.21571 0.627397 0.747525 0.627397 0.458761 0.902966C0.169996 1.17853 0.169996 1.62532 0.458761 1.90089L4.21933 5.48961C4.25543 5.52406 4.29433 5.5542 4.33533 5.58003C4.62234 5.76088 5.01237 5.73074 5.26504 5.48961L9.02561 1.90089C9.31438 1.62532 9.31438 1.17853 9.02561 0.902966C8.73685 0.627397 8.26867 0.627397 7.97991 0.902966L4.74219 3.99273L1.50447 0.902966Z"/>
+                                </svg>
+                            </span>
+                        </a>
+                        
+                        <ul class="flex flex-col items-start gap-2 lg:h-fit lg:absolute lg:bg-white dark:lg:bg-black top-full lg:mt-[10px] lg:py-4 min-w-[180px] rounded-md lg:shadow-[0_0_3px_rgb(60_72_88_/_15%)] sub-menu">
+                            <li><a href="https://github.com/simplex-chat/simplexmq/blob/stable/protocol/overview-tjr.md"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >Whitepaper</a></li>
+                            <li><a href="https://github.com/simplex-chat/simplexmq/blob/stable/protocol/simplex-messaging.md"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >SMP protocol</a></li>
+                            <li><a href="https://github.com/simplex-chat/simplex-chat/blob/stable/docs/protocol/simplex-chat.md"
+                                target="_blank" class="py-[10px] lg:px-[20px]"
+                                >Chat protocol</a></li>
+                        </ul>
+                    </li>
+
+                    <hr class="dark:opacity-[0.1]" >
+
+                    <li class="nav-link relative ">
+                        <a href="/blog" class="flex items-center justify-between gap-2 lg:py-5">
+                            <span class="text-[16px] leading-[26px] tracking-[0.01em] nav-link-text text-black dark:text-white before:bg-black dark:before:bg-white">Blog</span>
+                        </a>
+                    </li>
+                </ul>
+
+                <a href="https://github.com/simplex-chat/simplex-chat#help-us-with-donations"
+                    target="_blank" class="inline-block self-center text-white dark:text-black text-[16px] font-medium tracking-[0.02em] rounded-[34px] bg-primary-light dark:bg-primary-dark py-3 lg:py-2 px-20 lg:px-5 mb-16 lg:mb-0"
+                    >Donate</a>
+
+                <div class=" inline-block self-center dark:hidden mr-[-36px] mt-[8px]">
+                    <a class="github-button" href="https://github.com/simplex-chat/simplex-chat" data-size="large"
+                        data-show-count="true" aria-label="Star simplex-chat on GitHub">Star</a>
+                </div>
+
+                <div class="inline-block self-center hidden dark:block mr-[-36px] mt-[8px]">
+                    <a class="github-button" href="https://github.com/simplex-chat/simplex-chat" data-size="large"
+                        data-color-scheme="no-preference: dark; light: dark; dark: dark;"
+                        data-show-count="true" aria-label="Star simplex-chat on GitHub">Star</a>
+                </div>
+            </div>
+        </nav>
+
+        <button href="#" class="flex items-center justify-center h-[36px] w-[36px] ml-10 theme-switch-btn">
+            <img src="/img/new/sun.svg"  alt="" srcset="" class="sun">
+            <img src="/img/new/moon.svg" alt="" srcset="" class="moon">
+        </button>
+
+        <button href="" id="btn-mobile" class="flex lg:hidden items-center justify-center h-[36px] w-[36px] ml-10 nav-toggle-btn">
+            <img src="/img/new/hamburger.svg" id="hamburger" alt="" srcset="">
+            <svg class="fill-black dark:fill-white hidden" id="cross" width="13" height="13" viewBox="0 0 13 13" xmlns="http://www.w3.org/2000/svg">
+                <path d="M12.7973 11.5525L7.59762 6.49833L12.7947 1.44675C13.055 1.19371 13.0658 0.771991 12.8188 0.505331C12.5718 0.238674 12.1602 0.227644 11.8999 0.480681L6.65343 5.58028L1.09979 0.182228C0.839522 -0.070157 0.427909 -0.059127 0.18094 0.207531C-0.0660305 0.474191 -0.0552645 0.895911 0.205003 1.14894L5.70862 6.49833L0.20247 11.851C-0.0577975 12.104 -0.0685635 12.5257 0.178407 12.7924C0.306324 12.9306 0.477936 13 0.650181 13C0.811033 13 0.971873 12.9397 1.09726 12.817L6.65343 7.41639L11.9025 12.5186C12.0285 12.6406 12.1893 12.7015 12.3495 12.7015C12.5218 12.7015 12.6934 12.6321 12.8213 12.4939C13.0689 12.2273 13.0582 11.8062 12.7973 11.5525Z" />
+            </svg>
+        </button>
+    </div>
+</header>
+
+
+<SCript>
+// switch theme
+const sunIcon = document.querySelector('.sun');
+const moonIcon = document.querySelector('.moon');
+
+const userTheme = localStorage.getItem('theme');
+const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches;
+
+const iconToggle = () => {
+    sunIcon.classList.toggle('hidden');
+    moonIcon.classList.toggle('hidden');
+}
+
+const themeCheck = () => {
+    if(userTheme === 'dark' || (!userTheme && systemTheme)){
+        document.documentElement.classList.add('dark');
+        moonIcon.classList.add('hidden');
+    }
+    else{
+        sunIcon.classList.add('hidden');
+    }
+}
+
+const themeSwitch = () => {
+    if(document.documentElement.classList.contains('dark')){
+        document.documentElement.classList.remove('dark');
+        localStorage.setItem('theme','light');
+        iconToggle();
+    }
+    else{
+        document.documentElement.classList.add('dark');
+        localStorage.setItem('theme','dark');
+        iconToggle();
+    }
+}
+
+const nav = document.querySelector('header nav');
+window.addEventListener('click',(e)=>{
+    if(e.target.closest('.nav-link')){
+        if(e.target.closest('.nav-link').classList.contains('active')){
+            e.target.closest('.nav-link').classList.remove('active');
+        }
+        else{
+            document.querySelectorAll('.nav-link').forEach(el => el.classList.remove('active'))
+            e.target.closest('.nav-link').classList.add('active');
+        }
+    }
+    else if(e.target.closest('.nav-toggle-btn')){
+        document.body.classList.toggle('lock-scroll');
+        if(nav.classList.contains('open')){
+            nav.classList.remove('open');
+            document.getElementById('hamburger').classList.remove('hidden');
+            document.getElementById('cross').classList.add('hidden');
+        }
+        else{
+            nav.classList.add('open');
+            document.getElementById('hamburger').classList.add('hidden');
+            document.getElementById('cross').classList.remove('hidden');
+        }
+    }
+    else if(e.target.closest('.theme-switch-btn')){
+        themeSwitch();
+    }
+})
+
+themeCheck();
+
+const changeHeaderBg = ()=>{
+    const header = document.querySelector('header')
+    const scrollValue = window.scrollY
+    if(scrollValue > 5){
+        header.classList.add('bg-primary-bg-light');
+        header.classList.add('dark:bg-primary-bg-dark');
+    }
+    else{
+        header.classList.remove('bg-primary-bg-light');
+        header.classList.remove('dark:bg-primary-bg-dark');
+    }
+}
+
+window.addEventListener('scroll',changeHeaderBg);
+</SCript>
+
+    <div class="container px-5">
+      <a class="inline-block text-grey-black dark:text-white my-5 underline underline-offset-2" href="/blog"><&nbsp;Back to list</a>
+    </div>
+
+    <section id="article" class="container mb-[75px] bg-white dark:bg-[#17203D] px-5">
+      <div class="py-6 md:p-[60px]"><h1 id="security-assessment-by-trail-of-bits-the-new-website-and-v42-released" tabindex="-1">Security assessment by Trail of Bits, the new website and v4.2 released</h1>
+<p><strong>Published:</strong> Nov 8, 2022</p>
+<h2 id="security-assessment-by-trail-of-bits" tabindex="-1">Security assessment by Trail of Bits</h2>
+<img src="./images/20221108-trail-of-bits.jpg" width=240>
+<p>When we first launched the app in March the response on Reddit was: <em>&quot;Have you been audited or should we just ignore you?&quot;</em>.</p>
+<p>We have a growing number of enthusiasts using SimpleX Chat who can accept the security risks of unaudited system, but the users who depend on their security were patiently waiting until some independent experts review our codebase.</p>
+<p><a href="https://www.trailofbits.com/about">Trail of Bits</a>, a US based security and technology consultancy whose clients include big tech companies, governmental agencies and major blockchain projects, had 2 engineers reviewing SimpleX Chat for one calendar week, specifically <a href="https://github.com/simplex-chat/simplexmq">simplexmq library</a> that is responsible for all cryptography and networking of SimpleX platform.</p>
+<p>2 medium and 2 low severity issues were identified, all of which require a high difficulty attack to exploit – the attacker would need to have a privileged access to the system, may need to know complex technical details, or must discover other weaknesses to exploit them. 3 of these issues are already fixed in v4.2.</p>
+<p>In the course of the audit, Trail of Bits assessed the maturity of the <a href="https://github.com/simplex-chat/simplexmq">simplexmq library</a> across eight categories and found five of them to be strong or satisfactory.</p>
+<p>Explained below is our understanding of the issues, as well as fixes implemented by the SimpleX Chat team after project completion. The full security review is available via <a href="https://github.com/trailofbits/publications/blob/master/reviews/SimpleXChat.pdf">Trail of Bits publications</a>.</p>
+<p>We are hugely thankful to Trail of Bits and their engineers for the work they did, helping us identify these issues and supporting the ongoing efforts to make Simple Chat more secure.</p>
+<h3 id="medium-severity-issues" tabindex="-1">Medium severity issues</h3>
+<h4 id="x3dh-key-exchange-for-double-ratchet-protocol" tabindex="-1">X3DH key exchange for double ratchet protocol</h4>
+<p>We made a mistake implementing X3DH key exchange - the key derivation function was not applied to the result of concatenation of three DH operations. The attack to exploit this mistake has high difficulty, as it would require compromising one of private keys generated by the clients, and also it would only affect forward secrecy until break-in recovery happens (after both sides sent some messages).</p>
+<p>Please note that SimpleX does not perform X3DH with long-term identity keys, as the SimpleX protocol does not rely on long-term keys to identify client devices. Therefore, the impact of compromising a key will be less severe, as it will affect only the secrets of the connection where the key was compromised.</p>
+<p>This issue is fixed in version 4.2 in <a href="https://github.com/simplex-chat/simplexmq/pull/548/files">this PR</a>, and if both clients are updated the key exchange will not have this vulnerability. Also, previously created connections should be secure as long as both sides sent the messages, but if you believe that your private key(s) could have been compromised (for example, if you used SimpleX Chat since before we added database encryption), we recommend that you create the new connections with your contacts, at least with the security-critical ones. Simply rotating the connection queue (manual queue rotation is added in version 4.2) will not be sufficient, as this rotation does not re-initialize the ratchets - this is something we will be adding in the future.</p>
+<h4 id="keys-are-stored-in-unpinned-memory-and-not-cleared-after-their-lifetime" tabindex="-1">Keys are stored in unpinned memory and not cleared after their lifetime</h4>
+<p>The problem here is that the memory with cryptographic keys can be swapped to the storage and potentially accessed by an attacker who has root-level access to the device (or the level of access required to access swap file of the application). So, if you are running SimpleX Chat on desktop you could improve its security by running it in an isolated container.</p>
+<p>In our opinion, on mobile operating systems it is less severe as each application already runs in its own container, and applications do not share access to their swap areas (e.g., on Android swap is a <a href="https://developer.android.com/topic/performance/memory-management">compressed area in RAM</a> not accessible to other applications).</p>
+<p>To exploit this issue an attacker needs to have a privileged system access to the device. Also, we believe <a href="https://www.microsoft.com/en-us/research/wp-content/uploads/1993/01/gen-gc-for-haskell.pdf">Haskell generational garbage collection</a> makes the lifetime of unused memory lower than in other languages.</p>
+<p>We will be addressing this issue in the near future, possibly by using library <a href="https://hackage.haskell.org/package/secure-memory-0.0.0.2">secure-memory</a> created by Kirill Elagin, an engineer at Serokell, or some other similar approach.</p>
+<h3 id="low-severity-issues" tabindex="-1">Low severity issues</h3>
+<h4 id="the-string-padding-function-is-incorrect-for-long-messages-and-the-string-unpadding-function-throws-exception-for-short-messages" tabindex="-1">The string padding function is incorrect for long messages, and the string unpadding function throws exception for short messages</h4>
+<p>Both these issues are fixed in 4.2 in <a href="https://github.com/simplex-chat/simplexmq/pull/547/files">this PR</a>, with the additional unit tests, and we also validated that even before the fix the strings that would cause such exception were never passed to this function – The SimpleX Chat team could not find the possibility of the attack that would succeed because of this issue.</p>
+<h3 id="whats-next" tabindex="-1">What's next</h3>
+<p>There are areas of SimpleX Chat that were out of scope of this review, specifically:</p>
+<ul>
+<li>the chat protocol implementation and mobile UIs, as they includes no cryptography of networking (with the exception of Android app storing encrypted database passphrase and key exchange/encryption for WebRTC calls).</li>
+<li>push notifications server that is used by iOS clients.</li>
+</ul>
+<p>We will be arranging to review these areas separately.</p>
+<h2 id="the-new-website" tabindex="-1">The new website</h2>
+<p>Our <a href="https://old-website.simplex.chat">previous website</a> was created 2 years ago to present SimpleX idea, there was no SimpleX Chat at the time - we only had a prototype implementation of SimpleX Messaging Protocol server then.</p>
+<p>A lot of people told us that our website didn't explain well enough who SimpleX Chat is for, what problems it solves, and how it is different from the alternatives. So, while we love to be focused on the chat application, we decided to make the new one.</p>
+<p>We hope that our <a href="https://simplex.chat">new website</a> better answers these questions. If you think something should be added/removed/changed - please let us know. Thank you!</p>
+<h2 id="simplex-chat-v42-released" tabindex="-1">SimpleX Chat v4.2 released!</h2>
+<p>New in this release:</p>
+<ul>
+<li>fixed 3 issues from the security audit!</li>
+<li>group links - group admins can create the links for new members to join</li>
+<li>auto-accept contact requests + configure whether to accept incognito and welcome message</li>
+<li>small things: change group member role, mark chat as unread, send stickers and GIFs from Android keyboards.</li>
+</ul>
+<p>Beta features (enable Developer tools to try them):</p>
+<ul>
+<li>manually switch contact or member to another address / server (it has to be supported by both clients to work)</li>
+<li>receive files faster (enable it in Privacy &amp; Security settings)</li>
+</ul>
+<h3 id="group-links" tabindex="-1">Group links</h3>
+<p><img src="./images/20221108-group1.png" width="288">    <img src="./images/20221108-group2.png" width="288"></p>
+<p>It's been requested by many users - to be able to join a group via link. Because SimpleX Chat groups are fully decentralised, and there is no server-side state, joining via these links requires the participation of the link creator who has to be online to accept the group joining request.</p>
+<p>The way it works under the hood is similar to how contact addresses work:</p>
+<ol>
+<li>Group admin or owner creates a long term address that is technically the same as a user address, but it is associated with a specific group.</li>
+<li>The user that joins the group can identify that this link belongs to some group by an additional piece of data in the link - <code>{&quot;type&quot;: &quot;group&quot;, &quot;groupLinkId&quot;: &quot;some random string&quot;}</code>. The ID in this link does not represent a group identity, every time any user creates a new link for the same group, this ID will be different. This ID is used by the joining client to identify the group and automatically accept the invitation when it is received.</li>
+<li>When admin receives a connection request, they automatically accept it and send invitation link to join the group.</li>
+<li>The joining user compares the ID in the invitation with the ID in the link, and if they match – automatically accepts the invitation.</li>
+</ol>
+<p>After that it works as when joining via the manual invitation - the joining user will be establishing the connection with all existing members to be able to send messages to the group.</p>
+<p>The link can be created via the group page, as shown on the picture.</p>
+<p>We have several groups you can join to ask any questions or just to test the app:</p>
+<ul>
+<li>
+<p><a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2Fu2dS9sG8nMNURyZwqASV4yROM28Er0luVTx5X1CsMrU%3D%40smp4.simplex.im%2FWHV0YU1sYlU7NqiEHkHDB6gxO1ofTync%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEAWbebOqVYuBXaiqHcXYjEHCpYi6VzDlu6CVaijDTmsQU%253D%26srv%3Do5vmywmrnaxalvz6wi3zicyftgio6psuvyniis6gco6bp6ekl4cqj4id.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22mL-7Divb94GGmGmRBef5Dg%3D%3D%22%7D">#SimpleX-Group</a>: a general group with more than a 100 members where you can ask any questions.</p>
+</li>
+<li>
+<p>Several groups by countries/languages: <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2Fhpq7_4gGJiilmz5Rf-CswuU5kZGkm_zOIooSw6yALRg%3D%40smp5.simplex.im%2FmIorjTDPG24jdLKXwutS6o9hdQQRZwfQ%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEA9N0BZaECrAw3we3S1Wq4QO7NERBuPt9447immrB50wo%253D%26srv%3Djjbyvoemxysm7qxap7m5d5m35jzv5qq6gnlv7s4rsn7tdwwmuqciwpid.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22S8aISlOgkTMytSox9gAM2Q%3D%3D%22%7D">#SimpleX-DE</a> (German), <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2Fu2dS9sG8nMNURyZwqASV4yROM28Er0luVTx5X1CsMrU%3D%40smp4.simplex.im%2FlTWmQplLEaoJyHnEL1-B3f2PtDsikcTs%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEA-hMBlsQjNxK2vaVhqW_UyAVtuoYqgYTigK4B9dJ9CGc%253D%26srv%3Do5vmywmrnaxalvz6wi3zicyftgio6psuvyniis6gco6bp6ekl4cqj4id.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22G0UtRHIn0TmPoo08h_cbTA%3D%3D%22%7D">#SimpleX-US</a> (US/English), <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2Fu2dS9sG8nMNURyZwqASV4yROM28Er0luVTx5X1CsMrU%3D%40smp4.simplex.im%2F11r6XyjwVMj0WDIUMbmNDXO996M_EN_1%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEAXDmc2Lrj9WQOjEcWa0DeQHF3HcYOp9b68s8M_BJ7gEk%253D%26srv%3Do5vmywmrnaxalvz6wi3zicyftgio6psuvyniis6gco6bp6ekl4cqj4id.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22EZCeSYpeIBkaQwCcpcF00w%3D%3D%22%7D">#SimpleX-France</a>, <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2Fhpq7_4gGJiilmz5Rf-CswuU5kZGkm_zOIooSw6yALRg%3D%40smp5.simplex.im%2FZSYM278L5WoZiApx3925EAjSXcsAVNVu%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEA7RJ2wfT8zdfOLyE5OtWLEAPowj-q6F2HB0ExbATw8Gk%253D%26srv%3Djjbyvoemxysm7qxap7m5d5m35jzv5qq6gnlv7s4rsn7tdwwmuqciwpid.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22fsVoklNGptt7n-droqJYUQ%3D%3D%22%7D">#SimpleX-RU</a> (Russian), <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2FPQUV2eL0t7OStZOoAsPEV2QYWt4-xilbakvGUGOItUo%3D%40smp6.simplex.im%2FmP0LbswSbfxoVkkxiWE2NYnBCgZ9Snvj%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEAVwZuSsw4Mf52EaBNdNI3RebsLm0jg65ZIkcmH9E5uy8%253D%26srv%3Dbylepyau3ty4czmn77q4fglvperknl4bi2eb2fdy2bh4jxtf32kf73yd.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22M9xIULUNZx51Wsa5Kdb0Sg%3D%3D%22%7D">#SimpleX-NL</a> (Netherlands/Dutch), <a href="https://simplex.chat/contact#/?v=1-2&amp;smp=smp%3A%2F%2FPQUV2eL0t7OStZOoAsPEV2QYWt4-xilbakvGUGOItUo%3D%40smp6.simplex.im%2FaZ_wjh6QAYHB-LjyGtp8bllkzoq880u-%23%2F%3Fv%3D1-2%26dh%3DMCowBQYDK2VuAyEA-_Wulzc3j16i7t77XJ5wgwxeW8_Ea8GxetMo7K4MgjI%253D%26srv%3Dbylepyau3ty4czmn77q4fglvperknl4bi2eb2fdy2bh4jxtf32kf73yd.onion&amp;data=%7B%22type%22%3A%22group%22%2C%22groupLinkId%22%3A%22QWmXdrFzIeMd2OoEPMFkBQ%3D%3D%22%7D">#SimpleX-IT</a> (Italian).</p>
+</li>
+</ul>
+<p>You can join these groups either by opening these links in the app or by opening them in desktop browser and scanning QR code.</p>
+<p>Let me know if you'd like to add some other countries to the list. Join via the apps to share what's going on and ask any questions!</p>
+<h3 id="auto-accept-contact-requests" tabindex="-1">Auto-accept contact requests</h3>
+<p><img src="./images/20221108-address1.png" width="288">    <img src="./images/20221108-address2.png" width="288"></p>
+<p>When somebody connects to you via your long-term address you have to manually accept a connection request (it shows in blue color in the list of chats). The feature that we added in this release allows to configure the app to accept contact requests automatically, and also choose whether this contact should receive your main profile or a random incognito profile (independent of the current app setting), and add an optional auto-reply message.</p>
+<p>This feature is useful if you publish your address on your webpage or social profile, and do not want to screen people who want to connect to you. You may want to send a standard welcome message, for example, if it is an online store, and you need to share any information with everybody who contacts you.</p>
+<p>Our @simplex account that you connect to when you choose &quot;Connect to developers&quot; in the app used this feature for a long time, and now it is available to mobile app users.</p>
+<h3 id="some-small-things" tabindex="-1">Some small things</h3>
+<ol>
+<li>
+<p>Changing group member role is a very basic feature, but it was only added in this release.</p>
+</li>
+<li>
+<p>You can now mark a conversation as unread, for example if you accidentally marked all messages as read and you want to review it later.</p>
+</li>
+<li>
+<p>Send stickers and GIFs from Android keyboards, and, finally, the bug with backspace button is resolved as well.</p>
+</li>
+</ol>
+<h3 id="change-your-delivery-address-beta" tabindex="-1">Change your delivery address (BETA)</h3>
+<img src="./images/20221108-switch-address.png" width="288">
+<p>To manually switch any of your contacts (or a group member to a new server address) enable Developer tools and choose &quot;Change receiving address&quot; on the contact page. As long as they run a new version of the app and online, the switch should only take a few seconds.</p>
+<p>That is a major improvement of metadata privacy of SimpleX protocols, because previously, while we didn't have user identifiers, the pairwise identifiers of messaging queues used to deliver messages were used for as long as the contact existed. Now these identifiers are temporary, and in a near future we will be adding automatic rotation of these delivery addresses.</p>
+<p>It is also useful when you want to migrate message delivery to another server, for example, if you used SimpleX Chat default servers and now want to self-host your own. Or, maybe, you need to change the address of your server. Previously it would require creating new contacts and losing conversation histories, and now all you have to do is to change server configuration in the app, and when the change of the address is triggered (currently, only manually, and in the near future - automatically), your contacts will be migrated to a new server, without you doing anything - it only requires each party sending 2 messages to negotiate the reconnection, and it would also rotate the encryption keys used for the outer layer of E2E encryption.</p>
+<h3 id="receive-images-and-small-files-faster-beta" tabindex="-1">Receive images and small files faster (BETA)</h3>
+<img src="./images/20221108-faster-images.png" width="288">
+<p>From version 4.2 all files smaller than ~92kb (equal to 6 message blocks) will be sent in the same connection where you have the chat, and files smaller than ~231kb (the limit for image size) can also be optionally received via the same connection – the latter requires enabling &quot;Transfer images faster&quot; in Privacy &amp; security settings (it will be available after you enable Developer tools). There are two reasons why it is not on by default yet: 1) we wanted to ensure it is stable; 2) there is a small effect on metadata privacy of having a burst of traffic in the same connection where you are having the main conversation.</p>
+<p>This functionality was created for the future voice messages, as they need to be sent without acceptance, so that the recipients can listen to them even when the sender is offline.</p>
+<h2 id="simplex-platform" tabindex="-1">SimpleX platform</h2>
+<p>Some links to answer the most common questions:</p>
+<p><a href="20220511-simplex-chat-v2-images-files.html#the-first-messaging-platform-without-user-identifiers">How can SimpleX deliver messages without user identifiers</a>.</p>
+<p><a href="20220711-simplex-chat-v3-released-ios-notifications-audio-video-calls-database-export-import-protocol-improvements.html#why-having-users-identifiers-is-bad-for-the-users">What are the risks to have identifiers assigned to the users</a>.</p>
+<p><a href="20220723-simplex-chat-v3.1-tor-groups-efficiency.html#privacy-technical-details-and-limitations">Technical details and limitations</a>.</p>
+<p><a href="https://github.com/simplex-chat/simplex-chat/blob/stable/README.md#frequently-asked-questions">How SimpleX is different from Session, Matrix, Signal, etc.</a>.</p>
+<p>Please also see the information on our <a href="https://simplex.chat">new website</a> - it also answers all these questions.</p>
+<h2 id="help-us-with-donations" tabindex="-1">Help us with donations</h2>
+<p>Huge thank you to everybody who donated to SimpleX Chat!</p>
+<p>We are prioritizing users privacy and security - it would be impossible without your support.</p>
+<p>Our pledge to our users is that SimpleX protocols are and will remain open, and in public domain, - so anybody can build the future implementations of the clients and the servers. We are building SimpleX platform based on the same principles as email and web, but much more private and secure.</p>
+<p>Your donations help us raise more funds – any amount, even the price of the cup of coffee, makes a big difference for us.</p>
+<p>It is possible to donate via:</p>
+<ul>
+<li><a href="https://github.com/sponsors/simplex-chat">GitHub</a> - it is commission-free for us.</li>
+<li><a href="https://opencollective.com/simplex-chat">OpenCollective</a> - it charges a commission, and also accepts donations in many crypto-currencies.</li>
+<li>Monero wallet: 8568eeVjaJ1RQ65ZUn9PRQ8ENtqeX9VVhcCYYhnVLxhV4JtBqw42so2VEUDQZNkFfsH5sXCuV7FN8VhRQ21DkNibTZP57Qt</li>
+<li>Bitcoin wallet: 1bpefFkzuRoMY3ZuBbZNZxycbg7NYPYTG</li>
+<li>please let us know, via GitHub issue or chat, if you want to make a donation in some other cryptocurrency - we will add the address to the list.</li>
+</ul>
+<p>Thank you,</p>
+<p>Evgeny</p>
+<p>SimpleX Chat founder</p>
+</div>
+    </section>
+
+    <section class="bg-[#D9E7ED] dark:bg-[#0E2B57] py-[50px]">
+    <div class="container">
+        <div class="flex flex-col lg:flex-row justify-between">
+            <div class="flex flex-col items-center lg:items-start">
+                <a href="/" class="h-full mb-14 dark:hidden"><img class="w-auto h-[32px]" src="/img/new/logo-light.png" alt="logo" /></a>
+                <a href="/" class="h-full mb-14 hidden dark:inline-block"><img class="w-auto h-[32px]" src="/img/new/logo-dark.png" alt="logo" /></a>
+
+                <div class="flex flex-col items-center lg:items-start lg:flex-row gap-[150px] lg:gap-[350px]">
+                    <div class="flex flex-col items-center lg:items-start">
+                        <a href="https://github.com/simplex-chat/simplexmq/blob/stable/protocol/overview-tjr.md"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            SimpleX Whitepaper</a>
+                        <a href="https://github.com/simplex-chat/simplex-chat/blob/stable/docs/protocol/simplex-chat.md"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            SimpleX Chat protocol</a>
+                        <a href="https://github.com/simplex-chat/simplex-chat/blob/stable/PRIVACY.md"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            Terms & Privacy Policy</a>
+                        <a href="https://github.com/simplex-chat/simplex-chat#help-us-with-donations"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            Donate</a>
+                    </div>
+                    <div class="flex flex-col items-center lg:items-start">
+                        <a href="https://github.com/simplex-chat/simplex-chat/blob/stable/docs/CLI.md"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            Terminal CLI</a>
+                        <a href="https://github.com/simplex-chat/simplex-chat/tree/stable/packages/simplex-chat-client/typescript"
+                            target="_blank"
+                            class="text-grey-black dark:text-white text-[14px] font-medium leading-[28px] tracking-[0.01em] mb-3">
+                            TypeScript SDK</a>
+                    </div>
+                </div>
+            </div>
+
+            <article class="mt-10 lg:mt-0">
+                <div class="h-[40px] flex gap-4 justify-center">
+                    <a href="https://github.com/simplex-chat" target="_blank">
+                        <svg class="fill-primary-light dark:fill-primary-dark" width="40" height="40" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M20.2907 0.926758C9.24635 0.926758 0.290527 10.1075 0.290527 21.4331C0.290527 30.4933 6.02118 38.18 13.9679 40.8915C14.9674 41.0813 15.3344 40.4467 15.3344 39.905C15.3344 39.4161 15.3158 37.8007 15.3072 36.0872C9.74314 37.3277 8.56906 33.6677 8.56906 33.6677C7.65927 31.2975 6.3484 30.6672 6.3484 30.6672C4.53379 29.3945 6.48519 29.4206 6.48519 29.4206C8.49355 29.5653 9.55105 31.5338 9.55105 31.5338C11.3349 34.6688 14.2298 33.7624 15.3711 33.2385C15.5506 31.9131 16.069 31.0085 16.6409 30.4964C12.1986 29.9779 7.52878 28.2195 7.52878 20.3621C7.52878 18.1232 8.31007 16.294 9.58947 14.8579C9.38181 14.3414 8.69723 12.2557 9.78322 9.43111C9.78322 9.43111 11.4627 8.87998 15.2847 11.5331C16.8801 11.0787 18.591 10.8509 20.2907 10.8431C21.9904 10.8509 23.7027 11.0787 25.301 11.5331C29.1183 8.87998 30.7955 9.43111 30.7955 9.43111C31.8842 12.2557 31.1992 14.3414 30.9916 14.8579C32.274 16.294 33.05 18.1232 33.05 20.3621C33.05 28.2382 28.3712 29.9724 23.9176
+                                30.4801C24.635 31.1165 25.2742 32.3644 25.2742 34.2776C25.2742 37.0214 25.251 39.2296 25.251 39.905C25.251 40.4507 25.611 41.0902 26.6248 40.8888C34.5672 38.1742 40.2905 30.4903 40.2905 21.4331C40.2905 10.1075 31.336 0.926758 20.2907 0.926758Z" />
+                        </svg>
+                    </a>
+                    <a href="https://www.reddit.com/r/SimpleXChat/" target="_blank">
+                        <svg class="fill-primary-light dark:fill-primary-dark" width="40" height="40" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M20.874 40.9268C31.9197 40.9268 40.874 31.9724 40.874 20.9268C40.874 9.88108 31.9197 0.926758 20.874 0.926758C9.82834 0.926758 0.874023 9.88108 0.874023 20.9268C0.874023 31.9724 9.82834 40.9268 20.874 40.9268ZM30.4091 16.615C31.9031 16.615 33.1157 17.8276 33.1157 19.3216C33.1157 20.426 32.4445 21.3787 31.5567 21.8118C31.6 22.0716 31.6217 22.3315 31.6217 22.613C31.6217 26.7705 26.7929 30.1268 20.8165 30.1268C14.8402 30.1268 10.0114 26.7705 10.0114 22.613C10.0114 22.3315 10.0331 22.05 10.0764 21.7902C9.12362 21.3571 8.47402 20.426 8.47402 19.3216C8.47402 17.8276 9.68662 16.615 11.1807 16.615C11.8953 16.615 12.5665 16.9181 13.0429 17.3728C14.9051 16.0086 17.4819 15.1642 20.3618 15.0776L21.726 8.6248C21.7693 8.49488 21.8343 8.3866 21.9425 8.32164C22.0508 8.25668 22.1807 8.23504 22.3106 8.25668L26.7929 9.20944C27.0961 8.55984 27.7457 8.12676 28.5035 8.12676C29.5646 8.12676 30.4307 8.99292 30.4307
+                                10.0539C30.4307 11.115 29.5646 11.9811 28.5035 11.9811C27.4642 11.9811 26.6197 11.1582 26.5764 10.1406L22.5705 9.29604L21.3362 15.0776C24.1512 15.1858 26.7063 16.052 28.5469 17.3728C29.0232 16.8964 29.6728 16.615 30.4091 16.615ZM16.5291 19.3216C15.4681 19.3216 14.602 20.1878 14.602 21.2488C14.602 22.3098 15.4681 23.176 16.5291 23.176C17.5902 23.176 18.4563 22.3098 18.4563 21.2488C18.4563 20.1878 17.5902 19.3216 16.5291 19.3216ZM20.7949 27.7449C21.5311 27.7449 24.0429 27.6582 25.3638 26.3374C25.5587 26.1425 25.5587 25.8394 25.4071 25.6228C25.2122 25.428 24.8874 25.428 24.6925 25.6228C23.848 26.4456 22.0941 26.7488 20.8165 26.7488C19.539 26.7488 17.7634 26.4456 16.9405 25.6228C16.7457 25.428 16.4209 25.428 16.226 25.6228C16.0311 25.8177 16.0311 26.1425 16.226 26.3374C17.5252 27.6366 20.0587 27.7449 20.7949 27.7449ZM23.0902 21.2488C23.0902 22.3098 23.9563 23.176 25.0173 23.176C26.0783 23.176 26.9445 22.3098 26.9445 21.2488C26.9445 20.1878 26.0783
+                                19.3216 25.0173 19.3216C23.9563 19.3216 23.0902 20.1878 23.0902 21.2488Z" />
+                        </svg>
+                    </a>
+                    <a href="https://twitter.com/simplexchat" target="_blank">
+                        <svg class="fill-primary-light dark:fill-primary-dark" width="40" height="40" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M20.4575 40.9268C31.5032 40.9268 40.4575 31.9725 40.4575 20.9268C40.4575 9.88106 31.5032 0.926758 20.4575 0.926758C9.41182 0.926758 0.45752 9.88106 0.45752 20.9268C0.45752 31.9725 9.41182 40.9268 20.4575 40.9268ZM29.916 16.7766C29.916 23.1157 25.014 30.4265 16.0519 30.4265V30.423C13.4038 30.4265 10.8115 29.6795 8.58252 28.2719C8.96846 28.3174 9.35558 28.3397 9.74271 28.3409C11.9372 28.3432 14.0688 27.6182 15.7942 26.283C13.7101 26.2444 11.8802 24.9055 11.2425 22.9507C11.9716 23.0898 12.7245 23.0619 13.4418 22.869C11.1689 22.4165 9.53371 20.4504 9.53252 18.1671V18.1062C10.2106 18.478 10.9694 18.6835 11.7448 18.7057C9.60377 17.2981 8.94233 14.4948 10.2355 12.3026C12.7103 15.2992 16.3606 17.1207 20.2782 17.3147C19.8851 15.6487 20.4231 13.902 21.6878 12.7306C23.6507 10.9137 26.737 11.0073 28.5824 12.9387C29.6737 12.7271 30.7199 12.3327 31.677 11.7738C31.3125 12.8857 30.5513 13.828 29.5348 14.4277C30.5002
+                                14.3155 31.4443 14.0609 32.3325 13.6728C31.6782 14.6362 30.8553 15.4781 29.9017 16.1562C29.916 16.362 29.916 16.5685 29.916 16.7766Z" />
+                        </svg>
+                    </a>
+                    <a href="https://www.linkedin.com/company/simplex-chat/" target="_blank">
+                        <svg class="fill-primary-light dark:fill-primary-dark" width="40" height="40" viewBox="0 0 41 41" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path fill-rule="evenodd" clip-rule="evenodd" d="M20.0408 0.926758C8.9951 0.926758 0.0407715 9.88109 0.0407715 20.9268C0.0407715 31.9724 8.9951 40.9268 20.0408 40.9268C31.0864 40.9268 40.0408 31.9724 40.0408 20.9268C40.0408 9.88109 31.0864 0.926758 20.0408 0.926758ZM9.6421 17.4916H14.1745V31.1098H9.6421V17.4916ZM14.4731 13.279C14.4437 11.9438 13.4889 10.9268 11.9383 10.9268C10.3878 10.9268 9.3741 11.9438 9.3741 13.279C9.3741 14.5866 10.3579 15.6328 11.8794 15.6328H11.9084C13.4889 15.6328 14.4731 14.5866 14.4731 13.279ZM25.3017 17.1718C28.2843 17.1718 30.5203 19.1187 30.5203 23.3015L30.5201 31.1098H25.9879V23.824C25.9879 21.994 25.3319 20.7453 23.6912 20.7453C22.439 20.7453 21.6932 21.5871 21.3656 22.4003C21.2458 22.6916 21.2164 23.0976 21.2164 23.5046V31.1101H16.6834C16.6834 31.1101 16.7431 18.7698 16.6834 17.492H21.2164V19.4208C21.8179 18.4936 22.8953 17.1718 25.3017 17.1718Z" />
+                        </svg>
+                    </a>
+                </div>
+            </article>
+        </div>
+        <a href="#" class="text-grey-black dark:text-white text-[16px] text-center lg:text-left font-medium leading-[28px] tracking-[0.01em] block mt-[60px]">© 2020-2022 SimpleX | Open-Source Project</a>
+    </div>
+</section>
+
+  </body>
+
+</html>
